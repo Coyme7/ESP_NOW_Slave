@@ -1,89 +1,42 @@
-#include <shared_types.h>
+#include <Arduino.h>
 
+#include "slave/slave_config.h"
+#include "slave/slave_hardware.h"
+#include "slave/slave_tasks.h"
+#include "slave/slave_transport.h"
 
-uint8_t masterAddress[] = {0x24, 0x58, 0x7c, 0xd0, 0xb3, 0x64};
-ControlPacket txPacket, rxPacket;
-
-void onDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
-    memcpy(&rxPacket, incomingData, sizeof(rxPacket));
-    // 从机的一切指令听主机的
-    sysData.master_x_pos = rxPacket.x;
-    sysData.master_y_pos = rxPacket.y;
-    sysData.current_mode = rxPacket.mode; 
-}
-
-// ==========================================
-// 核心 1 (Core 1): 电压位置环执行核
-// ==========================================
-void IRAM_ATTR task_foc_loop(void *pvParameters) {
-    float simulated_gimbal_x = 0; // 模拟云台真实物理位置
-    float auto_draw_angle = 0;
-    
-    while(true) {
-        uint8_t mode = sysData.current_mode;
-        
-        if (mode == MODE_COLLAB_DRAW) {
-            // 协同模式：死死咬住主端传来的位置 (高刚性 PD 控制模拟)
-            // float error = sysData.master_x_pos - simulated_gimbal_x;
-            // motor.target_voltage = error * Kp - motor.velocity * Kd;
-            simulated_gimbal_x = sysData.master_x_pos * 0.98f; // 模拟跟随滞后
-            
-            // 模拟死区检测：画笔撞到画框物理边界
-            if (simulated_gimbal_x > 100.0f) {
-                sysData.is_boundary_hit = true;
-            } else {
-                sysData.is_boundary_hit = false;
-            }
-            
-        } else if (mode == MODE_AUTO_DRAW) {
-            // 进阶模式：从端自己画圆，不理会主端输入
-            auto_draw_angle += 0.05f;
-            simulated_gimbal_x = sin(auto_draw_angle) * 50.0f; // 产生正弦轨迹
-            sysData.is_boundary_hit = false;
-            
-        } else if (mode == MODE_BLE_MEDIA) {
-            // 蓝牙模式：从端彻底卸载力矩，电机 Disable
-            // motor.disable();
-            simulated_gimbal_x = 0;
-        }
-
-        sysData.slave_x_pos = simulated_gimbal_x; // 更新自身位置，准备发回主机
-        vTaskDelay(pdMS_TO_TICKS(1)); 
-    }
-}
-
-// ==========================================
-// 核心 0 (Core 0): 状态回传调度核
-// ==========================================
-void task_comm_loop(void *pvParameters) {
-    uint32_t packet_id = 0;
-    while(true) {
-        // 将从端的实际执行位置发回给主机 (闭环逆向反馈)
-        txPacket.x = sysData.slave_x_pos;
-        txPacket.y = sysData.slave_y_pos;
-        txPacket.button = sysData.is_boundary_hit; // 借用 button 位传撞墙信号
-        txPacket.packet_id = packet_id++;
-        
-        esp_now_send(masterAddress, (uint8_t *) &txPacket, sizeof(txPacket));
-        
-        Serial.printf("[Slave] Mode: %d | Master Cmd: %.2f | Gimbal Pos: %.2f | Hit: %d\n", 
-                      sysData.current_mode, sysData.master_x_pos, sysData.slave_x_pos, sysData.is_boundary_hit);
-
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
+// 从机固件入口。
+// 这个文件只负责“上电顺序”：启用 Arduino 运行时、启动串口、先进入安全输出状态、
+// 再初始化 X 轴硬件和 ESP-NOW，最后创建任务。运动控制、UV 安全和遥测发送都在
+// slave/* 模块中实现，便于单独审查安全边界。
 extern "C" void app_main() {
+    // 当前工程使用 ESP-IDF app_main 入口，需要显式初始化 Arduino 兼容层。
     initArduino();
     Serial.begin(115200);
-    WiFi.mode(WIFI_STA);
-    esp_now_init();
-    esp_now_register_recv_cb(onDataRecv);
-    
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, masterAddress, 6);
-    esp_now_add_peer(&peerInfo);
 
-    xTaskCreatePinnedToCore(task_comm_loop, "CommTask", 4096, NULL, 1, NULL, 0); // Core 0
-    xTaskCreatePinnedToCore(task_foc_loop,  "FOCTask",  8192, NULL, configMAX_PRIORITIES - 1, NULL, 1); // Core 1
+    // 从机最重要的上电默认：紫光灯关闭，X/Y 电机使能关闭。
+    // 这一步必须早于无线初始化和任务启动，避免通信包或任务调度前出现误输出。
+    configureSlaveSafeOutputs();
+
+    // 默认 SLAVE_X_MOTOR_HW_ENABLED=0，因此通常只锁存 MOTOR_OUTPUT_DISABLED。
+    // 第一阶段用仿真跟随验证通信和安全联锁，不直接驱动真实云台。
+    const bool motor_ready = setupSlaveXMotorHardware();
+
+    // ESP-NOW 初始化完成后打印本机 MAC 和硬编码主机 MAC，方便现场核对两块板。
+    setupSlaveEspNow();
+    printSlaveEspNowIdentity();
+
+    // boot 行给硬件联调使用：确认 X 纸面半幅、投影距离、控制周期和通信周期。
+    Serial.printf("[Slave] boot motor_hw=%u x_half=%.1fmm throw=%.1fmm control=%luus comm=%lums vlim=%.2fV vel=%.2frad/s angleP=%.2f\n",
+                  motor_ready ? 1 : 0,
+                  PLOT_X_HALF_RANGE_MM,
+                  kSlaveXAxis.throw_distance_mm,
+                  static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),
+                  static_cast<unsigned long>(COMM_LOOP_PERIOD_MS),
+                  kSlaveMotorFoc.motor_voltage_limit_v,
+                  kSlaveMotorFoc.velocity_limit_rad_s,
+                  kSlaveMotorFoc.angle_p);
+
+    // 进入多任务模型：Core 1 只跑 X 轴控制，Core 0 处理通信、UV 安全和状态打印。
+    startSlaveTasks();
 }
