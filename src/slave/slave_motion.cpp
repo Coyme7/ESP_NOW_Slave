@@ -11,7 +11,7 @@
 // 从机运动模块。
 // 数据流：MasterCommandPacket.x_norm -> 纸面毫米 -> 云台目标角 ->
 // 真实电机或仿真跟随 -> 实际角/实际 x_norm 遥测。
-// 这里位于 10 kHz 控制热路径，不做无线发送、串口输出或 UV GPIO 写。
+// 这里位于从机本地控制热路径，不做无线发送、串口输出或 UV GPIO 写。
 
 float xNormToPaperMm(int16_t x_norm) {
     // 协议坐标表示纸面目标，不是电机电角度或编码器原始值。
@@ -48,13 +48,13 @@ void runSlaveControlStep() {
     if (isSlaveCommandTimedOut(now_us)) {
         // 命令失效时立即标记 command_valid=false，并把目标保持在中心角。
         // UV 安全任务也会因为命令超时而关闭紫光。
-        sysData.command_valid = false;
+        sysData.link.command_valid = false;
         faults |= FAULT_COMMAND_TIMEOUT;
     }
 
     // 默认目标是中心角。只有命令有效且处于协作绘图模式时，才接受主机 x_norm。
     float target_angle_rad = kSlaveXAxis.center_angle_rad;
-    if (sysData.command_valid && sysData.current_mode == MODE_COLLAB_DRAW) {
+    if (sysData.link.command_valid && sysData.link.current_mode == MODE_COLLAB_DRAW) {
         target_angle_rad = paperMmToGimbalAngleRad(xNormToPaperMm(command.x_norm));
     }
 
@@ -66,22 +66,23 @@ void runSlaveControlStep() {
         faults |= FAULT_BOUNDARY_HIT;
     }
 
-    sysData.boundary_hit = at_edge;
-    sysData.slave_target_angle_rad = target_angle_rad;
+    sysData.slave.boundary_hit = at_edge;
+    sysData.slave.target_angle_rad = target_angle_rad;
 
     // 硬件关闭时，用一阶跟随模拟实际角度逐步靠近目标。
     // 硬件打开时 applySlaveXMotorTarget() 会返回真实 shaft_angle。
-    const float error_rad = target_angle_rad - sysData.slave_actual_angle_rad;
+    const float error_rad = target_angle_rad - sysData.slave.actual_angle_rad;
     const float simulated_actual_angle_rad =
-        sysData.slave_actual_angle_rad + (error_rad * kSlaveXAxis.simulated_response_alpha);
-    sysData.slave_actual_angle_rad =
+        sysData.slave.actual_angle_rad + (error_rad * kSlaveXAxis.simulated_response_alpha);
+    sysData.slave.actual_angle_rad =
         applySlaveXMotorTarget(target_angle_rad, simulated_actual_angle_rad);
 
     // 更新供串口和遥测读取的实际状态。Y 轴尚未实现，保持 0。
-    sysData.slave_angle_deg = radToDeg(sysData.slave_actual_angle_rad);
-    sysData.slave_x_pos = normToPercent(gimbalAngleRadToXNorm(sysData.slave_actual_angle_rad));
-    sysData.slave_y_pos = 0.0f;
+    sysData.slave.angle_deg = radToDeg(sysData.slave.actual_angle_rad);
+    sysData.slave.x_pos = normToPercent(gimbalAngleRadToXNorm(sysData.slave.actual_angle_rad));
+    sysData.slave.y_pos = 0.0f;
 
     // 将本步故障和 UV 联锁状态发布出去，后续 sendSlaveTelemetry() 会带回主机。
-    publishProtocolFaults(faults | (sysData.uv_interlock_blocked ? FAULT_UV_INTERLOCK : FAULT_NONE));
+    publishProtocolFaults(faults |
+                          (sysData.slave.uv_interlock_blocked ? FAULT_UV_INTERLOCK : FAULT_NONE));
 }

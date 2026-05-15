@@ -23,12 +23,17 @@ extern "C" void app_main() {
     const bool motor_ready = setupSlaveXMotorHardware();
 
     // ESP-NOW 初始化完成后打印本机 MAC 和硬编码主机 MAC，方便现场核对两块板。
+    #if SLAVE_ESPNOW_ENABLED
     setupSlaveEspNow();
     printSlaveEspNowIdentity();
+    #else
+    Serial.println("[Slave] espnow disabled for local motion/uv test");
+    #endif
 
     // boot 行给硬件联调使用：确认 X 纸面半幅、投影距离、控制周期和通信周期。
-    Serial.printf("[Slave] boot motor_hw=%u x_half=%.1fmm throw=%.1fmm control=%luus comm=%lums vlim=%.2fV vel=%.2frad/s angleP=%.2f\n",
+    Serial.printf("[Slave] boot motor_hw=%u espnow=%u x_half=%.1fmm throw=%.1fmm control=%luus comm=%lums vlim=%.2fV vel=%.2frad/s angleP=%.2f\n",
                   motor_ready ? 1 : 0,
+                  SLAVE_ESPNOW_ENABLED ? 1 : 0,
                   PLOT_X_HALF_RANGE_MM,
                   kSlaveXAxis.throw_distance_mm,
                   static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),

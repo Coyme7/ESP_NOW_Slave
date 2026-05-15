@@ -1,7 +1,9 @@
 #include "slave/slave_tasks.h"
 
 #include <Arduino.h>
+#include <esp_timer.h>
 
+#include "common/system_state.h"
 #include "slave/slave_config.h"
 #include "slave/slave_motion.h"
 #include "slave/slave_safety.h"
@@ -10,32 +12,109 @@
 
 // 从机任务编排模块。
 // 这里把实时控制、UV 安全、ESP-NOW 遥测和串口状态分成独立任务，
-// 让 10 kHz 热路径保持窄而可审查。
+// 让控制热路径保持窄而可审查。
 
 namespace {
+
+TaskHandle_t controlTaskHandle = nullptr;
+esp_timer_handle_t controlTimerHandle = nullptr;
+volatile uint32_t controlTimerMissedTicks = 0;
+volatile uint32_t controlTimerLastDtUs = 0;
+
+void IRAM_ATTR controlTimerCallback(void *arg) {
+    (void)arg;
+
+    TaskHandle_t handle = controlTaskHandle;
+    if (handle != nullptr) {
+#ifdef CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD
+        BaseType_t high_task_woken = pdFALSE;
+        vTaskNotifyGiveFromISR(handle, &high_task_woken);
+        if (high_task_woken == pdTRUE) {
+            esp_timer_isr_dispatch_need_yield();
+        }
+#else
+        xTaskNotifyGive(handle);
+#endif
+    }
+}
+
+bool startControlTimer() {
+    if (controlTimerHandle != nullptr) {
+        return true;
+    }
+
+    esp_timer_create_args_t timer_args = {};
+    timer_args.callback = controlTimerCallback;
+    timer_args.arg = nullptr;
+#ifdef CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD
+    timer_args.dispatch_method = ESP_TIMER_ISR;
+    const char *dispatch_name = "isr";
+#else
+    timer_args.dispatch_method = ESP_TIMER_TASK;
+    const char *dispatch_name = "task";
+#endif
+    timer_args.name = "SlaveCtrl";
+    timer_args.skip_unhandled_events = true;
+
+    esp_err_t err = esp_timer_create(&timer_args, &controlTimerHandle);
+    if (err != ESP_OK) {
+        Serial.printf("[Slave] control_timer create failed: %s\n", esp_err_to_name(err));
+        return false;
+    }
+
+    err = esp_timer_start_periodic(controlTimerHandle, SLAVE_CONTROL_TIMER_PERIOD_US);
+    if (err != ESP_OK) {
+        Serial.printf("[Slave] control_timer start failed: %s\n", esp_err_to_name(err));
+        esp_timer_delete(controlTimerHandle);
+        controlTimerHandle = nullptr;
+        return false;
+    }
+
+    Serial.printf("[Slave] control_timer started period=%luus dispatch=%s\n",
+                  static_cast<unsigned long>(SLAVE_CONTROL_TIMER_PERIOD_US),
+                  dispatch_name);
+    return true;
+}
 
 void task_control_loop(void *pvParameters) {
     (void)pvParameters;
 
-    // next_us 是 100 us 子步目标时间；last_wake 用于每 1 ms 重新对齐 FreeRTOS tick。
-    uint32_t next_us = micros();
-    TickType_t last_wake = xTaskGetTickCount();
+    controlTaskHandle = xTaskGetCurrentTaskHandle();
+    uint32_t previous_us = micros();
+
+    if (!startControlTimer()) {
+        addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
 
     while (true) {
-        // 每个 1 ms tick 内执行多个 100 us 子步，目标控制频率约 10 kHz。
-        for (uint32_t i = 0; i < SLAVE_CONTROL_STEPS_PER_TICK; ++i) {
-            // 子步间隔短于 FreeRTOS tick，因此用 taskYIELD 等待目标时间点。
-            while (static_cast<int32_t>(micros() - next_us) < 0) {
-                taskYIELD();
-            }
-            next_us += CONTROL_LOOP_PERIOD_US;
-
-            // 从机控制热路径入口：读取命令快照、计算目标、更新实际角和故障位。
-            runSlaveControlStep();
+        // 等待 100 us 控制定时器通知。任务在通知之间阻塞，让 CPU1 Idle 能运行。
+        const uint32_t pending_ticks =
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SLAVE_CONTROL_TIMER_TIMEOUT_MS));
+        if (pending_ticks == 0) {
+            addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+            previous_us = micros();
+            continue;
         }
-        // 完成一批子步后让出到下一个 tick，避免永久占用 Core 1。
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1));
+        if (pending_ticks > 1) {
+            controlTimerMissedTicks += pending_ticks - 1;
+        }
+
+        const uint32_t now_us = micros();
+        controlTimerLastDtUs = now_us - previous_us;
+        previous_us = now_us;
+
+        // 从机控制热路径入口：读取命令快照、计算目标、更新实际角和故障位。
+        runSlaveControlStep();
+
+        const uint32_t late_ticks = ulTaskNotifyTake(pdTRUE, 0);
+        if (late_ticks > 0) {
+            controlTimerMissedTicks += late_ticks;
+        }
     }
+
 }
 
 void task_safety_loop(void *pvParameters) {
@@ -48,6 +127,7 @@ void task_safety_loop(void *pvParameters) {
     }
 }
 
+#if SLAVE_ESPNOW_ENABLED
 void task_comm_loop(void *pvParameters) {
     (void)pvParameters;
 
@@ -60,6 +140,7 @@ void task_comm_loop(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(COMM_LOOP_PERIOD_MS));
     }
 }
+#endif
 
 void task_status_loop(void *pvParameters) {
     (void)pvParameters;
@@ -76,6 +157,7 @@ void task_status_loop(void *pvParameters) {
 void startSlaveTasks() {
     // Core 0 先启动通信、安全和状态任务，Core 1 最后启动控制任务。
     // 控制任务优先级最高；安全任务优先级高于状态打印。
+#if SLAVE_ESPNOW_ENABLED
     xTaskCreatePinnedToCore(task_comm_loop,
                             "SlaveComm",
                             SLAVE_COMM_TASK_STACK_BYTES,
@@ -83,6 +165,7 @@ void startSlaveTasks() {
                             SLAVE_COMM_TASK_PRIORITY,
                             NULL,
                             SLAVE_IO_CORE);
+#endif
     xTaskCreatePinnedToCore(task_safety_loop,
                             "SlaveSafety",
                             SLAVE_SAFETY_TASK_STACK_BYTES,
@@ -104,4 +187,12 @@ void startSlaveTasks() {
                             SLAVE_CONTROL_TASK_PRIORITY,
                             NULL,
                             SLAVE_CONTROL_CORE);
+}
+
+uint32_t getSlaveControlTimerMissedTicks() {
+    return controlTimerMissedTicks;
+}
+
+uint32_t getSlaveControlLastDtUs() {
+    return controlTimerLastDtUs;
 }

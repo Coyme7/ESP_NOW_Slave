@@ -2,7 +2,7 @@
 
 // slave_hardware
 // 职责：从机紫光 MOS、安全输出、MT6701/SimpleFOC X 轴硬件初始化和目标输出。
-// 运行约束：setUvPen() 只由安全任务调用；applySlaveXMotorTarget() 可在 10 kHz
+// 运行约束：setUvPen() 只由安全任务调用；applySlaveXMotorTarget() 可在本地控制
 // 控制步中调用，内部不得打印、分配内存或等待无线事件。
 
 // 设置紫光笔 MOS 输出。只有安全任务应该调用它，其他模块只表达 pen 命令或联锁状态。

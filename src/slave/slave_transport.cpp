@@ -27,18 +27,18 @@ void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
     (void)mac;
     // ESP-NOW 发送回调只记录结果，不打印、不重发、不控制 UV 或电机。
     if (status == ESP_NOW_SEND_SUCCESS) {
-        sysData.espnow_send_ok_count++;
-        sysData.last_send_ok = 1;
+        sysData.link.espnow_send_ok_count++;
+        sysData.link.last_send_ok = 1;
     } else {
-        sysData.espnow_send_fail_count++;
-        sysData.last_send_ok = 0;
+        sysData.link.espnow_send_fail_count++;
+        sysData.link.last_send_ok = 0;
     }
 }
 
 void rejectCommand(uint16_t fault) {
     // 拒收命令时立即标记 command_valid=false，控制任务会回中心，安全任务会关 UV。
-    sysData.command_valid = false;
-    sysData.espnow_recv_reject_count++;
+    sysData.link.command_valid = false;
+    sysData.link.espnow_recv_reject_count++;
     addLocalFault(fault);
 }
 
@@ -59,7 +59,7 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
         return;
     }
     // 序号必须向前推进，防止旧命令覆盖新命令。
-    if (sysData.command_valid && !isNewerSeq(packet.seq, sysData.last_command_seq)) {
+    if (sysData.link.command_valid && !isNewerSeq(packet.seq, sysData.link.last_command_seq)) {
         rejectCommand(FAULT_STALE_SEQUENCE);
         return;
     }
@@ -70,13 +70,13 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     portEXIT_CRITICAL(&commandMux);
 
     // 更新给控制、安全和状态任务使用的标量状态。
-    sysData.master_x_pos = normToPercent(packet.x_norm);
-    sysData.master_y_pos = normToPercent(packet.y_norm);
-    sysData.current_mode = packet.mode;
-    sysData.last_command_seq = packet.seq;
-    sysData.last_rx_us = micros();
-    sysData.command_valid = true;
-    sysData.espnow_recv_ok_count++;
+    sysData.master.x_pos = normToPercent(packet.x_norm);
+    sysData.master.y_pos = normToPercent(packet.y_norm);
+    sysData.link.current_mode = packet.mode;
+    sysData.link.last_command_seq = packet.seq;
+    sysData.link.last_rx_us = micros();
+    sysData.link.command_valid = true;
+    sysData.link.espnow_recv_ok_count++;
     publishProtocolFaults(FAULT_NONE);
 }
 
@@ -137,11 +137,11 @@ MasterCommandPacket snapshotMasterCommand() {
 
 void sendSlaveTelemetry(uint32_t seq) {
     // 以当前协议故障视图为基础，再叠加本步可直接观测的边界和 UV 联锁状态。
-    uint16_t faults = sysData.protocol_fault_flags;
-    if (sysData.boundary_hit) {
+    uint16_t faults = sysData.link.protocol_fault_flags;
+    if (sysData.slave.boundary_hit) {
         faults |= FAULT_BOUNDARY_HIT;
     }
-    if (sysData.uv_interlock_blocked) {
+    if (sysData.slave.uv_interlock_blocked) {
         faults |= FAULT_UV_INTERLOCK;
     }
 
@@ -150,12 +150,12 @@ void sendSlaveTelemetry(uint32_t seq) {
     SlaveTelemetryPacket packet = {};
     packet.fault_flags = faults;
     packet.seq = seq;
-    packet.ack_seq = sysData.last_command_seq;
+    packet.ack_seq = sysData.link.last_command_seq;
     packet.timestamp_us = micros();
-    packet.x_actual_norm = gimbalAngleRadToXNorm(sysData.slave_actual_angle_rad);
-    packet.y_actual_norm = percentToNorm(sysData.slave_y_pos);
-    packet.pen_state = sysData.pen_down ? 1 : 0;
-    packet.mode = sysData.current_mode;
+    packet.x_actual_norm = gimbalAngleRadToXNorm(sysData.slave.actual_angle_rad);
+    packet.y_actual_norm = percentToNorm(sysData.slave.y_pos);
+    packet.pen_state = sysData.link.pen_down ? 1 : 0;
+    packet.mode = sysData.link.current_mode;
     finalizeSlaveTelemetry(packet);
 
     // 保存最近一次遥测包，便于后续扩展状态读取或调试。
@@ -167,7 +167,7 @@ void sendSlaveTelemetry(uint32_t seq) {
     const esp_err_t send_result =
         esp_now_send(kSlavePeerMasterAddress, reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
     if (send_result != ESP_OK) {
-        sysData.espnow_send_fail_count++;
-        sysData.last_send_ok = 0;
+        sysData.link.espnow_send_fail_count++;
+        sysData.link.last_send_ok = 0;
     }
 }

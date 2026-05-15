@@ -3,9 +3,9 @@
 #include <Arduino.h>
 #include <board/board_pins_slave.h>
 
-#include "common/mt6701_ssi_sensor.h"
 #include "common/system_state.h"
 #include "slave/slave_config.h"
+#include "slave/hardware/slave_mt6701_sensor.h"
 
 #if SLAVE_X_MOTOR_HW_ENABLED
 #include <SimpleFOC.h>
@@ -32,25 +32,25 @@ BLDCDriver3PWM xDriver = BLDCDriver3PWM(
     board_pins_slave::MOTOR1_PWM_V_X,
     board_pins_slave::MOTOR1_PWM_W_X,
     board_pins_slave::MOTOR1_EN_X);
-Mt6701SsiSensor xSensor = Mt6701SsiSensor(board_pins_slave::ENCODER1_CS_X);
+SlaveMt6701Sensor xSensor = SlaveMt6701Sensor(board_pins_slave::ENCODER1_CS_X);
 #endif
 
 }  // namespace
 
 void setUvPen(bool enabled) {
     // 记录上一次输出状态，避免安全任务 1 kHz 重复写同样的 GPIO。
-    // 即便输出未变化，也同步 sysData.pen_down，保证串口状态反映真实 UV 输出。
+    // 即便输出未变化，也同步 sysData.link.pen_down，保证串口状态反映真实 UV 输出。
     static bool last_enabled = false;
     static bool initialized = false;
     if (initialized && enabled == last_enabled) {
-        sysData.pen_down = enabled;
+        sysData.link.pen_down = enabled;
         return;
     }
 
     // 两路 MOS 同步控制。当前设计中 UV 默认关闭，只有安全联锁允许时才拉高。
     digitalWrite(board_pins_slave::UV_MOS_1, enabled ? HIGH : LOW);
     digitalWrite(board_pins_slave::UV_MOS_2, enabled ? HIGH : LOW);
-    sysData.pen_down = enabled;
+    sysData.link.pen_down = enabled;
     last_enabled = enabled;
     initialized = true;
 }
@@ -125,7 +125,7 @@ bool setupSlaveXMotorHardware() {
 
 float applySlaveXMotorTarget(float target_angle_rad, float fallback_actual_angle_rad) {
 #if SLAVE_X_MOTOR_HW_ENABLED
-    // 真实硬件路径：10 kHz 控制步中更新 FOC 并写入角度目标。
+    // 真实硬件路径：本地控制步中更新 FOC 并写入角度目标。
     // 这里不做 Serial、ESP-NOW 或 UV GPIO 操作，保持控制路径干净。
     if (!xMotorReady) {
         (void)target_angle_rad;
