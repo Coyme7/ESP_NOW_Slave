@@ -1,10 +1,10 @@
-#include "slave/slave_hardware.h"
+#include "slave/hardware/slave_hardware.h"
 
 #include <Arduino.h>
 #include <board/board_pins_slave.h>
 
 #include "common/system_state.h"
-#include "slave/slave_config.h"
+#include "slave/config/slave_config.h"
 #include "slave/hardware/slave_mt6701_sensor.h"
 
 #if SLAVE_X_MOTOR_HW_ENABLED
@@ -123,7 +123,12 @@ bool setupSlaveXMotorHardware() {
 #endif
 }
 
-float applySlaveXMotorTarget(float target_angle_rad, float fallback_actual_angle_rad) {
+float applySlaveXMotorTarget(float target_angle_rad,
+                             float fallback_actual_angle_rad,
+                             SlaveXMotorStepTiming *timing) {
+    if (timing != nullptr) {
+        *timing = {};
+    }
 #if SLAVE_X_MOTOR_HW_ENABLED
     // 真实硬件路径：本地控制步中更新 FOC 并写入角度目标。
     // 这里不做 Serial、ESP-NOW 或 UV GPIO 操作，保持控制路径干净。
@@ -131,12 +136,39 @@ float applySlaveXMotorTarget(float target_angle_rad, float fallback_actual_angle
         (void)target_angle_rad;
         return fallback_actual_angle_rad;
     }
-    xMotor.loopFOC();
+    static uint32_t loop_foc_divider = 0;
+    const uint32_t foc_interval =
+        (SLAVE_X_FOC_EVERY_N_STEPS > 0) ? static_cast<uint32_t>(SLAVE_X_FOC_EVERY_N_STEPS) : 1UL;
+    const bool run_loop_foc = loop_foc_divider == 0;
+    loop_foc_divider++;
+    if (loop_foc_divider >= foc_interval) {
+        loop_foc_divider = 0;
+    }
+
+    const uint32_t foc_start_us = micros();
+    uint32_t move_start_us = foc_start_us;
+    if (run_loop_foc) {
+        xMotor.loopFOC();
+        move_start_us = micros();
+    }
     xMotor.move(target_angle_rad);
-    return xMotor.shaft_angle;
+    const uint32_t read_start_us = micros();
+    const float actual_angle_rad = xMotor.shaft_angle;
+    const uint32_t done_us = micros();
+    if (timing != nullptr) {
+        timing->loop_foc_us = run_loop_foc ? (move_start_us - foc_start_us) : 0UL;
+        timing->move_us = read_start_us - move_start_us;
+        timing->read_us = done_us - read_start_us;
+        timing->loop_foc_ran = run_loop_foc ? 1UL : 0UL;
+    }
+    return actual_angle_rad;
 #else
     // 硬件关闭时使用运动模块计算的仿真角度，仍能让遥测和 UV 联锁逻辑跑起来。
     (void)target_angle_rad;
     return fallback_actual_angle_rad;
 #endif
+}
+
+float applySlaveXMotorTarget(float target_angle_rad, float fallback_actual_angle_rad) {
+    return applySlaveXMotorTarget(target_angle_rad, fallback_actual_angle_rad, nullptr);
 }

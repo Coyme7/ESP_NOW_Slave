@@ -1,14 +1,14 @@
 #include <Arduino.h>
 
-#include "slave/slave_config.h"
-#include "slave/slave_hardware.h"
-#include "slave/slave_tasks.h"
-#include "slave/slave_transport.h"
+#include "slave/config/slave_config.h"
+#include "slave/hardware/slave_hardware.h"
+#include "slave/tasks/slave_tasks.h"
+#include "slave/comm/slave_transport.h"
 
 // 从机固件入口。
 // 这个文件只负责“上电顺序”：启用 Arduino 运行时、启动串口、先进入安全输出状态、
 // 再初始化 X 轴硬件和 ESP-NOW，最后创建任务。运动控制、UV 安全和遥测发送都在
-// slave/* 模块中实现，便于单独审查安全边界。
+// slave/* 分层模块中实现，便于单独审查安全边界。
 extern "C" void app_main() {
     // 当前工程使用 ESP-IDF app_main 入口，需要显式初始化 Arduino 兼容层。
     initArduino();
@@ -37,10 +37,14 @@ extern "C" void app_main() {
                   PLOT_X_HALF_RANGE_MM,
                   kSlaveXAxis.throw_distance_mm,
                   static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),
-                  static_cast<unsigned long>(COMM_LOOP_PERIOD_MS),
+                  static_cast<unsigned long>(SLAVE_TELEMETRY_PERIOD_MS),
                   kSlaveMotorFoc.motor_voltage_limit_v,
                   kSlaveMotorFoc.velocity_limit_rad_s,
                   kSlaveMotorFoc.angle_p);
+    Serial.printf("[Slave] status_period=%lums\n",
+                  static_cast<unsigned long>(SLAVE_STATUS_LOOP_PERIOD_MS));
+    Serial.printf("[Slave] foc_every_n_steps=%lu\n",
+                  static_cast<unsigned long>(SLAVE_X_FOC_EVERY_N_STEPS));
 
     // 进入多任务模型：Core 1 只跑 X 轴控制，Core 0 处理通信、UV 安全和状态打印。
     startSlaveTasks();

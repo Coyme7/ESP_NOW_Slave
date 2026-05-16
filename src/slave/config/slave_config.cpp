@@ -1,8 +1,8 @@
-#include "slave/slave_config.h"
+#include "slave/config/slave_config.h"
 
 // 从机 X 轴默认调参值。
 // 当前 A4 中心对应 0 rad，direction=1 表示正向 x_norm 让光斑向正 X 方向移动。
-// 投影距离默认 700 mm，settle_error_rad 约 0.5 deg，用于判断目标是否足够稳定再开 UV。
+// 投影距离默认 300 mm，settle_error_rad 约 0.5 deg，用于判断目标是否足够稳定再开 UV。
 // simulated_response_alpha 是仿真跟随系数，硬件关闭时让 actual_angle 缓慢靠近 target。
 const SlaveXAxisConfig kSlaveXAxis = {
     0.0f,
@@ -18,16 +18,24 @@ const SlaveXAxisConfig kSlaveXAxis = {
 const SlaveMotorFocConfig kSlaveMotorFoc = {
     12.0f,
     2.0f,
-    1.2f,
+    1.5f,
     0.6f,
-    2.0f,
-    6.0f,
-    0.15f,
+    3.0f,
+    8.0f,
+    0.18f,
     2.0f,
     0.0f,
     100.0f,
-    0.02f,
+    0.01f,
     0.0f,
+};
+
+const SlaveTrajectoryConfig kSlaveTrajectory = {
+    160.0f,
+    160.0f,
+    1200.0f,
+    0.05f,
+    0.5f,
 };
 
 // 当前单轴联调先使用固定主机 MAC；后续加入自动配对后再替换。

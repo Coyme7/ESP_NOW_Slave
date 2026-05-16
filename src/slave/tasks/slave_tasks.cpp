@@ -1,14 +1,14 @@
-#include "slave/slave_tasks.h"
+#include "slave/tasks/slave_tasks.h"
 
 #include <Arduino.h>
 #include <esp_timer.h>
 
 #include "common/system_state.h"
-#include "slave/slave_config.h"
-#include "slave/slave_motion.h"
-#include "slave/slave_safety.h"
-#include "slave/slave_status.h"
-#include "slave/slave_transport.h"
+#include "slave/config/slave_config.h"
+#include "slave/control/slave_motion.h"
+#include "slave/safety/slave_safety.h"
+#include "slave/status/slave_status.h"
+#include "slave/comm/slave_transport.h"
 
 // 从机任务编排模块。
 // 这里把实时控制、UV 安全、ESP-NOW 遥测和串口状态分成独立任务，
@@ -20,6 +20,33 @@ TaskHandle_t controlTaskHandle = nullptr;
 esp_timer_handle_t controlTimerHandle = nullptr;
 volatile uint32_t controlTimerMissedTicks = 0;
 volatile uint32_t controlTimerLastDtUs = 0;
+volatile uint32_t controlTimerMaxDtUs = 0;
+volatile uint32_t controlStepLastUs = 0;
+volatile uint32_t controlStepMaxUs = 0;
+volatile uint32_t controlCommandLastUs = 0;
+volatile uint32_t controlCommandMaxUs = 0;
+volatile uint32_t controlTrajectoryLastUs = 0;
+volatile uint32_t controlTrajectoryMaxUs = 0;
+volatile uint32_t controlMotorLastUs = 0;
+volatile uint32_t controlMotorMaxUs = 0;
+volatile uint32_t controlFocLastUs = 0;
+volatile uint32_t controlFocMaxUs = 0;
+volatile uint32_t controlMoveLastUs = 0;
+volatile uint32_t controlMoveMaxUs = 0;
+volatile uint32_t controlAngleReadLastUs = 0;
+volatile uint32_t controlAngleReadMaxUs = 0;
+volatile uint32_t controlStateLastUs = 0;
+volatile uint32_t controlStateMaxUs = 0;
+volatile uint32_t controlPublishLastUs = 0;
+volatile uint32_t controlPublishMaxUs = 0;
+volatile uint32_t controlFocRunCount = 0;
+volatile uint32_t controlFocSkipCount = 0;
+
+void updateMaxUs(volatile uint32_t &slot, uint32_t value) {
+    if (value > slot) {
+        slot = value;
+    }
+}
 
 void IRAM_ATTR controlTimerCallback(void *arg) {
     (void)arg;
@@ -90,7 +117,7 @@ void task_control_loop(void *pvParameters) {
     }
 
     while (true) {
-        // 等待 100 us 控制定时器通知。任务在通知之间阻塞，让 CPU1 Idle 能运行。
+        // 等待 200us 控制定时器通知。任务在通知之间阻塞，让 CPU1 Idle 能运行。
         const uint32_t pending_ticks =
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SLAVE_CONTROL_TIMER_TIMEOUT_MS));
         if (pending_ticks == 0) {
@@ -104,10 +131,38 @@ void task_control_loop(void *pvParameters) {
 
         const uint32_t now_us = micros();
         controlTimerLastDtUs = now_us - previous_us;
+        if (controlTimerLastDtUs > controlTimerMaxDtUs) {
+            controlTimerMaxDtUs = controlTimerLastDtUs;
+        }
         previous_us = now_us;
 
-        // 从机控制热路径入口：读取命令快照、计算目标、更新实际角和故障位。
-        runSlaveControlStep();
+        // 从机控制热路径入口：读取命令快照、平滑目标、更新实际角和故障位。
+        const uint32_t step_start_us = micros();
+        SlaveControlStepTiming step_timing = {};
+        runSlaveControlStep(static_cast<float>(controlTimerLastDtUs) * 0.000001f, &step_timing);
+        controlStepLastUs = micros() - step_start_us;
+        updateMaxUs(controlStepMaxUs, controlStepLastUs);
+        controlCommandLastUs = step_timing.command_us;
+        controlTrajectoryLastUs = step_timing.trajectory_us;
+        controlMotorLastUs = step_timing.motor_us;
+        controlFocLastUs = step_timing.foc_us;
+        controlMoveLastUs = step_timing.move_us;
+        controlAngleReadLastUs = step_timing.angle_read_us;
+        controlStateLastUs = step_timing.state_us;
+        controlPublishLastUs = step_timing.publish_us;
+        updateMaxUs(controlCommandMaxUs, step_timing.command_us);
+        updateMaxUs(controlTrajectoryMaxUs, step_timing.trajectory_us);
+        updateMaxUs(controlMotorMaxUs, step_timing.motor_us);
+        updateMaxUs(controlFocMaxUs, step_timing.foc_us);
+        updateMaxUs(controlMoveMaxUs, step_timing.move_us);
+        updateMaxUs(controlAngleReadMaxUs, step_timing.angle_read_us);
+        updateMaxUs(controlStateMaxUs, step_timing.state_us);
+        updateMaxUs(controlPublishMaxUs, step_timing.publish_us);
+        if (step_timing.foc_ran != 0) {
+            controlFocRunCount++;
+        } else {
+            controlFocSkipCount++;
+        }
 
         const uint32_t late_ticks = ulTaskNotifyTake(pdTRUE, 0);
         if (late_ticks > 0) {
@@ -137,7 +192,7 @@ void task_comm_loop(void *pvParameters) {
     while (true) {
         // 遥测发送在 Core 0 低频任务，不进入控制热路径。
         sendSlaveTelemetry(seq++);
-        vTaskDelay(pdMS_TO_TICKS(COMM_LOOP_PERIOD_MS));
+        vTaskDelay(pdMS_TO_TICKS(SLAVE_TELEMETRY_PERIOD_MS));
     }
 }
 #endif
@@ -148,7 +203,7 @@ void task_status_loop(void *pvParameters) {
     while (true) {
         // 串口打印限频到 STATUS_LOOP_PERIOD_MS，避免扰动无线和控制。
         printSlaveStatusLine();
-        vTaskDelay(pdMS_TO_TICKS(STATUS_LOOP_PERIOD_MS));
+        vTaskDelay(pdMS_TO_TICKS(SLAVE_STATUS_LOOP_PERIOD_MS));
     }
 }
 
@@ -195,4 +250,56 @@ uint32_t getSlaveControlTimerMissedTicks() {
 
 uint32_t getSlaveControlLastDtUs() {
     return controlTimerLastDtUs;
+}
+
+SlaveControlHealthSnapshot getSlaveControlHealthSnapshot() {
+    static uint32_t previous_missed_total = 0;
+    static uint32_t previous_foc_run_count = 0;
+    static uint32_t previous_foc_skip_count = 0;
+
+    const uint32_t missed_total = controlTimerMissedTicks;
+    const uint32_t foc_run_count = controlFocRunCount;
+    const uint32_t foc_skip_count = controlFocSkipCount;
+    SlaveControlHealthSnapshot snapshot = {};
+    snapshot.last_dt_us = controlTimerLastDtUs;
+    snapshot.max_dt_us = controlTimerMaxDtUs;
+    snapshot.missed_delta = missed_total - previous_missed_total;
+    snapshot.missed_total = missed_total;
+    snapshot.step_us = controlStepLastUs;
+    snapshot.step_max_us = controlStepMaxUs;
+    snapshot.command_us = controlCommandLastUs;
+    snapshot.command_max_us = controlCommandMaxUs;
+    snapshot.trajectory_us = controlTrajectoryLastUs;
+    snapshot.trajectory_max_us = controlTrajectoryMaxUs;
+    snapshot.motor_us = controlMotorLastUs;
+    snapshot.motor_max_us = controlMotorMaxUs;
+    snapshot.foc_us = controlFocLastUs;
+    snapshot.foc_max_us = controlFocMaxUs;
+    snapshot.move_us = controlMoveLastUs;
+    snapshot.move_max_us = controlMoveMaxUs;
+    snapshot.angle_read_us = controlAngleReadLastUs;
+    snapshot.angle_read_max_us = controlAngleReadMaxUs;
+    snapshot.state_us = controlStateLastUs;
+    snapshot.state_max_us = controlStateMaxUs;
+    snapshot.publish_us = controlPublishLastUs;
+    snapshot.publish_max_us = controlPublishMaxUs;
+    snapshot.foc_run_delta = foc_run_count - previous_foc_run_count;
+    snapshot.foc_skip_delta = foc_skip_count - previous_foc_skip_count;
+    snapshot.foc_divisor =
+        (SLAVE_X_FOC_EVERY_N_STEPS > 0) ? static_cast<uint32_t>(SLAVE_X_FOC_EVERY_N_STEPS) : 1UL;
+
+    previous_missed_total = missed_total;
+    previous_foc_run_count = foc_run_count;
+    previous_foc_skip_count = foc_skip_count;
+    controlTimerMaxDtUs = 0;
+    controlStepMaxUs = 0;
+    controlCommandMaxUs = 0;
+    controlTrajectoryMaxUs = 0;
+    controlMotorMaxUs = 0;
+    controlFocMaxUs = 0;
+    controlMoveMaxUs = 0;
+    controlAngleReadMaxUs = 0;
+    controlStateMaxUs = 0;
+    controlPublishMaxUs = 0;
+    return snapshot;
 }

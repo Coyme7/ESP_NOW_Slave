@@ -10,6 +10,7 @@ Mt6701SsiFastReader::Mt6701SsiFastReader(int cs_pin)
       last_({0, 0, 0}),
       last_read_duration_us_(0) {}
 
+// 初始化 CS 引脚和 SPI 指针；SPI 总线本身由上层硬件模块初始化。
 void Mt6701SsiFastReader::init(SPIClass *spi) {
     spi_ = spi;
     pinMode(cs_pin_, OUTPUT);
@@ -26,6 +27,7 @@ void Mt6701SsiFastReader::init(SPIClass *spi) {
     readFrame();
 }
 
+// 热路径读取函数：拉低 CS -> 固定 24-bit SPI -> 拉高 CS -> 解析帧。
 Mt6701SsiFrame Mt6701SsiFastReader::readFrame() {
 #if MT6701_SSI_TIMING_DIAG_ENABLED
     const uint32_t read_start_us = micros();
@@ -44,22 +46,27 @@ Mt6701SsiFrame Mt6701SsiFastReader::readFrame() {
     return last_;
 }
 
+// 返回最近一次原始帧，主要用于诊断打印。
 uint32_t Mt6701SsiFastReader::lastFrame() const {
     return last_.frame;
 }
 
+// 返回最近一次 14-bit 原始角度。
 uint16_t Mt6701SsiFastReader::rawAngle() const {
     return last_.raw_angle;
 }
 
+// 返回磁场状态位，可用于判断磁铁距离或安装异常。
 uint8_t Mt6701SsiFastReader::magneticStatus() const {
     return last_.magnetic_status;
 }
 
+// 返回最近一次 SSI 读取耗时，用于重构前后性能对比。
 uint32_t Mt6701SsiFastReader::lastReadDurationUs() const {
     return last_read_duration_us_;
 }
 
+// 直接操作 GPIO 输出寄存器拉低 CS，避免 digitalWrite 带来的额外开销。
 void Mt6701SsiFastReader::setCsLow() const {
     if (cs_bank0_mask_ != 0) {
         GPIO.out_w1tc = cs_bank0_mask_;
@@ -68,6 +75,7 @@ void Mt6701SsiFastReader::setCsLow() const {
     }
 }
 
+// 直接操作 GPIO 输出寄存器拉高 CS，与 setCsLow 配对使用。
 void Mt6701SsiFastReader::setCsHigh() const {
     if (cs_bank0_mask_ != 0) {
         GPIO.out_w1ts = cs_bank0_mask_;

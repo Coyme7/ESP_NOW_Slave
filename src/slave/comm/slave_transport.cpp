@@ -1,4 +1,4 @@
-#include "slave/slave_transport.h"
+#include "slave/comm/slave_transport.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -6,9 +6,9 @@
 #include <esp_wifi.h>
 
 #include "common/system_state.h"
-#include "slave/slave_config.h"
-#include "slave/slave_hardware.h"
-#include "slave/slave_motion.h"
+#include "slave/config/slave_config.h"
+#include "slave/hardware/slave_hardware.h"
+#include "slave/control/slave_motion.h"
 
 // 从机 ESP-NOW 传输模块。
 // 这里是无线包进出的唯一位置：从机接收 MasterCommandPacket，发送 SlaveTelemetryPacket。
@@ -136,8 +136,8 @@ MasterCommandPacket snapshotMasterCommand() {
 }
 
 void sendSlaveTelemetry(uint32_t seq) {
-    // 以当前协议故障视图为基础，再叠加本步可直接观测的边界和 UV 联锁状态。
-    uint16_t faults = sysData.link.protocol_fault_flags;
+    // 遥测优先回传当前实时故障；历史锁存值仍保留在本机状态行中。
+    uint16_t faults = getActiveFaultFlags();
     if (sysData.slave.boundary_hit) {
         faults |= FAULT_BOUNDARY_HIT;
     }

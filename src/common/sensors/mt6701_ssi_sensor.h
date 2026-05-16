@@ -19,12 +19,14 @@
 #define MT6701_SSI_TIMING_DIAG_ENABLED 0
 #endif
 
+// 一帧 SSI 读取结果：原始 24-bit 帧、14-bit 角度和磁场状态。
 struct Mt6701SsiFrame {
     uint32_t frame;
     uint16_t raw_angle;
     uint8_t magnetic_status;
 };
 
+// MT6701 帧解析：高 14 位为角度，低位中包含磁场状态。
 inline Mt6701SsiFrame parseMt6701SsiFrame(uint32_t frame) {
     Mt6701SsiFrame parsed = {};
     parsed.frame = frame & 0x00FFFFFFu;
@@ -33,6 +35,7 @@ inline Mt6701SsiFrame parseMt6701SsiFrame(uint32_t frame) {
     return parsed;
 }
 
+// 快速读取器：只负责单个 CS 对应的 MT6701，不在热路径做动态分配。
 class Mt6701SsiFastReader {
 public:
     explicit Mt6701SsiFastReader(int cs_pin);

@@ -1,11 +1,11 @@
-#include "slave/slave_safety.h"
+#include "slave/safety/slave_safety.h"
 
 #include <math.h>
 
 #include "common/system_state.h"
-#include "slave/slave_config.h"
-#include "slave/slave_hardware.h"
-#include "slave/slave_transport.h"
+#include "slave/config/slave_config.h"
+#include "slave/hardware/slave_hardware.h"
+#include "slave/comm/slave_transport.h"
 
 // 从机安全模块。
 // 它独立于运动控制运行在 Core 0，核心原则是：任何不确定状态都关 UV。
@@ -34,7 +34,12 @@ bool isSlaveUvAllowed(uint32_t now_us) {
         return false;
     }
 
-    // 只有实际角度足够接近目标角度，才认为光斑稳定到可落笔位置。
+    // 只有平滑目标接近命令目标，且实际角度足够接近目标角度，才认为光斑稳定到可落笔位置。
+    const float smoothing_error_mm =
+        fabsf(sysData.slave.target_x_mm - sysData.slave.smooth_x_mm);
+    if (smoothing_error_mm > kSlaveTrajectory.settle_error_mm) {
+        return false;
+    }
     const float tracking_error_rad =
         fabsf(sysData.slave.target_angle_rad - sysData.slave.actual_angle_rad);
     return tracking_error_rad <= kSlaveXAxis.settle_error_rad;
