@@ -1,15 +1,15 @@
 #pragma once
 
-// 从机 X 单轴纸面轨迹平滑器。
-// 输入/输出都使用 mm，调用方再通过 coordinate_mapper 转成云台角度。
+// 从机 X/Y 共用纸面轨迹平滑器。
+// 输入/输出都使用 mm，调用方再通过 coordinate_mapper 转成对应云台角度。
 struct SlaveTrajectorySmootherState {
-    float x_mm;
+    float position_mm;
     float velocity_mm_s;
     bool initialized;
 };
 
 struct SlaveTrajectorySmootherInput {
-    float target_x_mm;
+    float target_mm;
     float dt_s;
     float max_speed_mm_s;
     float accel_mm_s2;
@@ -17,7 +17,7 @@ struct SlaveTrajectorySmootherInput {
 };
 
 struct SlaveTrajectorySmootherOutput {
-    float x_mm;
+    float position_mm;
     float velocity_mm_s;
 };
 

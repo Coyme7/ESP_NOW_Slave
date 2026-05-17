@@ -20,6 +20,7 @@ TaskHandle_t controlTaskHandle = nullptr;
 esp_timer_handle_t controlTimerHandle = nullptr;
 volatile uint32_t controlTimerMissedTicks = 0;
 volatile uint32_t controlTimerLastDtUs = 0;
+#if SLAVE_TIMING_DIAG_ENABLED
 volatile uint32_t controlTimerMaxDtUs = 0;
 volatile uint32_t controlStepLastUs = 0;
 volatile uint32_t controlStepMaxUs = 0;
@@ -29,23 +30,51 @@ volatile uint32_t controlTrajectoryLastUs = 0;
 volatile uint32_t controlTrajectoryMaxUs = 0;
 volatile uint32_t controlMotorLastUs = 0;
 volatile uint32_t controlMotorMaxUs = 0;
-volatile uint32_t controlFocLastUs = 0;
-volatile uint32_t controlFocMaxUs = 0;
-volatile uint32_t controlMoveLastUs = 0;
-volatile uint32_t controlMoveMaxUs = 0;
-volatile uint32_t controlAngleReadLastUs = 0;
-volatile uint32_t controlAngleReadMaxUs = 0;
+volatile uint32_t controlXSensorLastUs = 0;
+volatile uint32_t controlXSensorMaxUs = 0;
+volatile uint32_t controlXFocLastUs = 0;
+volatile uint32_t controlXFocMaxUs = 0;
+volatile uint32_t controlXMoveLastUs = 0;
+volatile uint32_t controlXMoveMaxUs = 0;
+volatile uint32_t controlYSensorLastUs = 0;
+volatile uint32_t controlYSensorMaxUs = 0;
+volatile uint32_t controlYFocLastUs = 0;
+volatile uint32_t controlYFocMaxUs = 0;
+volatile uint32_t controlYMoveLastUs = 0;
+volatile uint32_t controlYMoveMaxUs = 0;
 volatile uint32_t controlStateLastUs = 0;
 volatile uint32_t controlStateMaxUs = 0;
 volatile uint32_t controlPublishLastUs = 0;
 volatile uint32_t controlPublishMaxUs = 0;
-volatile uint32_t controlFocRunCount = 0;
-volatile uint32_t controlFocSkipCount = 0;
+volatile uint32_t controlXFocRunCount = 0;
+volatile uint32_t controlXFocSkipCount = 0;
+volatile uint32_t controlYFocRunCount = 0;
+volatile uint32_t controlYFocSkipCount = 0;
+volatile uint32_t controlStepOverPeriodCount = 0;
+volatile uint32_t controlStepOver75PctCount = 0;
+volatile uint32_t controlStepOver50PctCount = 0;
+volatile uint32_t controlStepOver200Count = 0;
+volatile uint32_t controlStepOver300Count = 0;
 
 void updateMaxUs(volatile uint32_t &slot, uint32_t value) {
     if (value > slot) {
         slot = value;
     }
+}
+#endif
+
+constexpr bool controlRunsXAxisForTiming() {
+    return SLAVE_X_MOTOR_HW_ENABLED &&
+           (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_SYNC ||
+            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_FRAME ||
+            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_HW);
+}
+
+constexpr bool controlRunsYAxisForTiming() {
+    return SLAVE_Y_MOTOR_HW_ENABLED &&
+           (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_SYNC ||
+            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_FRAME ||
+            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_HW);
 }
 
 void IRAM_ATTR controlTimerCallback(void *arg) {
@@ -97,9 +126,11 @@ bool startControlTimer() {
         return false;
     }
 
+#if SLAVE_CONTROL_TIMER_LOG_ENABLED
     Serial.printf("[Slave] control_timer started period=%luus dispatch=%s\n",
                   static_cast<unsigned long>(SLAVE_CONTROL_TIMER_PERIOD_US),
                   dispatch_name);
+#endif
     return true;
 }
 
@@ -130,39 +161,84 @@ void task_control_loop(void *pvParameters) {
         }
 
         const uint32_t now_us = micros();
-        controlTimerLastDtUs = now_us - previous_us;
+        const uint32_t control_dt_us = now_us - previous_us;
+        controlTimerLastDtUs = control_dt_us;
+#if SLAVE_TIMING_DIAG_ENABLED
         if (controlTimerLastDtUs > controlTimerMaxDtUs) {
             controlTimerMaxDtUs = controlTimerLastDtUs;
         }
+#endif
         previous_us = now_us;
 
-        // 从机控制热路径入口：读取命令快照、平滑目标、更新实际角和故障位。
+        // 从机控制热路径入口：5kHz motor tick；planner 按配置分频运行。
+#if SLAVE_TIMING_DIAG_ENABLED
         const uint32_t step_start_us = micros();
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         SlaveControlStepTiming step_timing = {};
-        runSlaveControlStep(static_cast<float>(controlTimerLastDtUs) * 0.000001f, &step_timing);
+        runSlaveControlStep(static_cast<float>(control_dt_us) * 0.000001f, &step_timing);
+#else
+        runSlaveControlStep(static_cast<float>(control_dt_us) * 0.000001f, nullptr);
+#endif
         controlStepLastUs = micros() - step_start_us;
         updateMaxUs(controlStepMaxUs, controlStepLastUs);
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         controlCommandLastUs = step_timing.command_us;
         controlTrajectoryLastUs = step_timing.trajectory_us;
         controlMotorLastUs = step_timing.motor_us;
-        controlFocLastUs = step_timing.foc_us;
-        controlMoveLastUs = step_timing.move_us;
-        controlAngleReadLastUs = step_timing.angle_read_us;
+        controlXSensorLastUs = step_timing.x_sensor_us;
+        controlXFocLastUs = step_timing.x_foc_us;
+        controlXMoveLastUs = step_timing.x_move_us;
+        controlYSensorLastUs = step_timing.y_sensor_us;
+        controlYFocLastUs = step_timing.y_foc_us;
+        controlYMoveLastUs = step_timing.y_move_us;
         controlStateLastUs = step_timing.state_us;
         controlPublishLastUs = step_timing.publish_us;
         updateMaxUs(controlCommandMaxUs, step_timing.command_us);
         updateMaxUs(controlTrajectoryMaxUs, step_timing.trajectory_us);
         updateMaxUs(controlMotorMaxUs, step_timing.motor_us);
-        updateMaxUs(controlFocMaxUs, step_timing.foc_us);
-        updateMaxUs(controlMoveMaxUs, step_timing.move_us);
-        updateMaxUs(controlAngleReadMaxUs, step_timing.angle_read_us);
+        updateMaxUs(controlXSensorMaxUs, step_timing.x_sensor_us);
+        updateMaxUs(controlXFocMaxUs, step_timing.x_foc_us);
+        updateMaxUs(controlXMoveMaxUs, step_timing.x_move_us);
+        updateMaxUs(controlYSensorMaxUs, step_timing.y_sensor_us);
+        updateMaxUs(controlYFocMaxUs, step_timing.y_foc_us);
+        updateMaxUs(controlYMoveMaxUs, step_timing.y_move_us);
         updateMaxUs(controlStateMaxUs, step_timing.state_us);
         updateMaxUs(controlPublishMaxUs, step_timing.publish_us);
-        if (step_timing.foc_ran != 0) {
-            controlFocRunCount++;
-        } else {
-            controlFocSkipCount++;
+        if (controlRunsXAxisForTiming()) {
+            if (step_timing.x_foc_ran != 0) {
+                controlXFocRunCount++;
+            } else {
+                controlXFocSkipCount++;
+            }
         }
+        if (controlRunsYAxisForTiming()) {
+            if (step_timing.y_foc_ran != 0) {
+                controlYFocRunCount++;
+            } else {
+                controlYFocSkipCount++;
+            }
+        }
+#endif
+#else
+        runSlaveControlStep(static_cast<float>(control_dt_us) * 0.000001f, nullptr);
+#endif
+#if SLAVE_TIMING_DIAG_ENABLED
+        if (controlStepLastUs > SLAVE_CONTROL_LOOP_PERIOD_US) {
+            controlStepOverPeriodCount++;
+        }
+        if (controlStepLastUs > ((SLAVE_CONTROL_LOOP_PERIOD_US * 3UL) / 4UL)) {
+            controlStepOver75PctCount++;
+        }
+        if (controlStepLastUs > (SLAVE_CONTROL_LOOP_PERIOD_US / 2UL)) {
+            controlStepOver50PctCount++;
+        }
+        if (controlStepLastUs > 200UL) {
+            controlStepOver200Count++;
+        }
+        if (controlStepLastUs > 300UL) {
+            controlStepOver300Count++;
+        }
+#endif
 
         const uint32_t late_ticks = ulTaskNotifyTake(pdTRUE, 0);
         if (late_ticks > 0) {
@@ -188,11 +264,18 @@ void task_comm_loop(void *pvParameters) {
 
     // seq 是从机遥测序号，主机用它拒绝旧遥测。
     uint32_t seq = 0;
+    uint32_t last_telemetry_ms = 0;
 
     while (true) {
-        // 遥测发送在 Core 0 低频任务，不进入控制热路径。
-        sendSlaveTelemetry(seq++);
-        vTaskDelay(pdMS_TO_TICKS(SLAVE_TELEMETRY_PERIOD_MS));
+        processSlaveCommand();
+
+        const uint32_t now_ms = millis();
+        if (now_ms - last_telemetry_ms >= SLAVE_TELEMETRY_PERIOD_MS) {
+            // 遥测发送在 Core 0 低频任务，不进入控制热路径。
+            sendSlaveTelemetry(seq++);
+            last_telemetry_ms = now_ms;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
 #endif
@@ -228,6 +311,7 @@ void startSlaveTasks() {
                             SLAVE_SAFETY_TASK_PRIORITY,
                             NULL,
                             SLAVE_IO_CORE);
+#if SLAVE_STATUS_LOG_ENABLED
     xTaskCreatePinnedToCore(task_status_loop,
                             "SlaveStatus",
                             SLAVE_STATUS_TASK_STACK_BYTES,
@@ -235,6 +319,7 @@ void startSlaveTasks() {
                             SLAVE_STATUS_TASK_PRIORITY,
                             NULL,
                             SLAVE_IO_CORE);
+#endif
     xTaskCreatePinnedToCore(task_control_loop,
                             "SlaveControl",
                             SLAVE_CONTROL_TASK_STACK_BYTES,
@@ -254,52 +339,115 @@ uint32_t getSlaveControlLastDtUs() {
 
 SlaveControlHealthSnapshot getSlaveControlHealthSnapshot() {
     static uint32_t previous_missed_total = 0;
-    static uint32_t previous_foc_run_count = 0;
-    static uint32_t previous_foc_skip_count = 0;
-
     const uint32_t missed_total = controlTimerMissedTicks;
-    const uint32_t foc_run_count = controlFocRunCount;
-    const uint32_t foc_skip_count = controlFocSkipCount;
     SlaveControlHealthSnapshot snapshot = {};
     snapshot.last_dt_us = controlTimerLastDtUs;
-    snapshot.max_dt_us = controlTimerMaxDtUs;
     snapshot.missed_delta = missed_total - previous_missed_total;
     snapshot.missed_total = missed_total;
+    previous_missed_total = missed_total;
+
+#if SLAVE_TIMING_DIAG_ENABLED
+    static uint32_t previous_step_over_period_count = 0;
+    static uint32_t previous_step_over_75pct_count = 0;
+    static uint32_t previous_step_over_50pct_count = 0;
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
+    static uint32_t previous_x_foc_run_count = 0;
+    static uint32_t previous_x_foc_skip_count = 0;
+    static uint32_t previous_y_foc_run_count = 0;
+    static uint32_t previous_y_foc_skip_count = 0;
+#endif
+    static uint32_t previous_step_over_200_count = 0;
+    static uint32_t previous_step_over_300_count = 0;
+
+    const uint32_t step_over_period_count = controlStepOverPeriodCount;
+    const uint32_t step_over_75pct_count = controlStepOver75PctCount;
+    const uint32_t step_over_50pct_count = controlStepOver50PctCount;
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
+    const uint32_t x_foc_run_count = controlXFocRunCount;
+    const uint32_t x_foc_skip_count = controlXFocSkipCount;
+    const uint32_t y_foc_run_count = controlYFocRunCount;
+    const uint32_t y_foc_skip_count = controlYFocSkipCount;
+#endif
+    const uint32_t step_over_200_count = controlStepOver200Count;
+    const uint32_t step_over_300_count = controlStepOver300Count;
+    snapshot.max_dt_us = controlTimerMaxDtUs;
     snapshot.step_us = controlStepLastUs;
     snapshot.step_max_us = controlStepMaxUs;
+    snapshot.step_over_period_delta = step_over_period_count - previous_step_over_period_count;
+    snapshot.step_over_75pct_delta = step_over_75pct_count - previous_step_over_75pct_count;
+    snapshot.step_over_50pct_delta = step_over_50pct_count - previous_step_over_50pct_count;
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     snapshot.command_us = controlCommandLastUs;
     snapshot.command_max_us = controlCommandMaxUs;
     snapshot.trajectory_us = controlTrajectoryLastUs;
     snapshot.trajectory_max_us = controlTrajectoryMaxUs;
     snapshot.motor_us = controlMotorLastUs;
     snapshot.motor_max_us = controlMotorMaxUs;
-    snapshot.foc_us = controlFocLastUs;
-    snapshot.foc_max_us = controlFocMaxUs;
-    snapshot.move_us = controlMoveLastUs;
-    snapshot.move_max_us = controlMoveMaxUs;
-    snapshot.angle_read_us = controlAngleReadLastUs;
-    snapshot.angle_read_max_us = controlAngleReadMaxUs;
+    snapshot.x_sensor_us = controlXSensorLastUs;
+    snapshot.x_sensor_max_us = controlXSensorMaxUs;
+    snapshot.x_foc_us = controlXFocLastUs;
+    snapshot.x_foc_max_us = controlXFocMaxUs;
+    snapshot.x_move_us = controlXMoveLastUs;
+    snapshot.x_move_max_us = controlXMoveMaxUs;
+    snapshot.y_sensor_us = controlYSensorLastUs;
+    snapshot.y_sensor_max_us = controlYSensorMaxUs;
+    snapshot.y_foc_us = controlYFocLastUs;
+    snapshot.y_foc_max_us = controlYFocMaxUs;
+    snapshot.y_move_us = controlYMoveLastUs;
+    snapshot.y_move_max_us = controlYMoveMaxUs;
     snapshot.state_us = controlStateLastUs;
     snapshot.state_max_us = controlStateMaxUs;
     snapshot.publish_us = controlPublishLastUs;
     snapshot.publish_max_us = controlPublishMaxUs;
-    snapshot.foc_run_delta = foc_run_count - previous_foc_run_count;
-    snapshot.foc_skip_delta = foc_skip_count - previous_foc_skip_count;
-    snapshot.foc_divisor =
-        (SLAVE_X_FOC_EVERY_N_STEPS > 0) ? static_cast<uint32_t>(SLAVE_X_FOC_EVERY_N_STEPS) : 1UL;
+    snapshot.x_foc_run_delta = x_foc_run_count - previous_x_foc_run_count;
+    snapshot.x_foc_skip_delta = x_foc_skip_count - previous_x_foc_skip_count;
+    snapshot.x_foc_divisor =
+        controlRunsXAxisForTiming()
+            ? ((SLAVE_X_FOC_EVERY_N_STEPS > 0) ? static_cast<uint32_t>(SLAVE_X_FOC_EVERY_N_STEPS) : 1UL)
+            : 0UL;
+    snapshot.y_foc_run_delta = y_foc_run_count - previous_y_foc_run_count;
+    snapshot.y_foc_skip_delta = y_foc_skip_count - previous_y_foc_skip_count;
+    snapshot.y_foc_divisor =
+        controlRunsYAxisForTiming()
+            ? ((SLAVE_Y_FOC_EVERY_N_STEPS > 0) ? static_cast<uint32_t>(SLAVE_Y_FOC_EVERY_N_STEPS) : 1UL)
+            : 0UL;
+    snapshot.step_over_200_delta = step_over_200_count - previous_step_over_200_count;
+    snapshot.step_over_300_delta = step_over_300_count - previous_step_over_300_count;
 
-    previous_missed_total = missed_total;
-    previous_foc_run_count = foc_run_count;
-    previous_foc_skip_count = foc_skip_count;
+    previous_step_over_period_count = step_over_period_count;
+    previous_step_over_75pct_count = step_over_75pct_count;
+    previous_step_over_50pct_count = step_over_50pct_count;
+    previous_x_foc_run_count = x_foc_run_count;
+    previous_x_foc_skip_count = x_foc_skip_count;
+    previous_y_foc_run_count = y_foc_run_count;
+    previous_y_foc_skip_count = y_foc_skip_count;
+    previous_step_over_200_count = step_over_200_count;
+    previous_step_over_300_count = step_over_300_count;
     controlTimerMaxDtUs = 0;
     controlStepMaxUs = 0;
     controlCommandMaxUs = 0;
     controlTrajectoryMaxUs = 0;
     controlMotorMaxUs = 0;
-    controlFocMaxUs = 0;
-    controlMoveMaxUs = 0;
-    controlAngleReadMaxUs = 0;
+    controlXSensorMaxUs = 0;
+    controlXFocMaxUs = 0;
+    controlXMoveMaxUs = 0;
+    controlYSensorMaxUs = 0;
+    controlYFocMaxUs = 0;
+    controlYMoveMaxUs = 0;
     controlStateMaxUs = 0;
     controlPublishMaxUs = 0;
+#else
+    snapshot.step_over_200_delta = step_over_200_count - previous_step_over_200_count;
+    snapshot.step_over_300_delta = step_over_300_count - previous_step_over_300_count;
+
+    previous_step_over_period_count = step_over_period_count;
+    previous_step_over_75pct_count = step_over_75pct_count;
+    previous_step_over_50pct_count = step_over_50pct_count;
+    previous_step_over_200_count = step_over_200_count;
+    previous_step_over_300_count = step_over_300_count;
+    controlTimerMaxDtUs = 0;
+    controlStepMaxUs = 0;
+#endif
+#endif
     return snapshot;
 }

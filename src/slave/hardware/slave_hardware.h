@@ -5,13 +5,24 @@
 struct SlaveXMotorStepTiming {
     uint32_t loop_foc_us;
     uint32_t move_us;
-    uint32_t read_us;
+    uint32_t sensor_us;
     uint32_t loop_foc_ran;
 };
 
 float applySlaveXMotorTarget(float target_angle_rad,
                              float fallback_actual_angle_rad,
                              SlaveXMotorStepTiming *timing);
+
+float runSlaveXMotorPerfIsolationStep(float target_angle_rad,
+                                      float fallback_actual_angle_rad,
+                                      SlaveXMotorStepTiming *timing);
+
+float applySlaveYMotorTarget(float target_angle_rad,
+                             float fallback_actual_angle_rad,
+                             SlaveXMotorStepTiming *timing);
+
+bool setupSlaveYHardware();
+bool refreshSlaveYSensorForBringup(float *angle_rad, uint16_t *raw_angle);
 
 // slave_hardware
 // 职责：从机紫光 MOS、安全输出、MT6701/SimpleFOC X 轴硬件初始化和目标输出。
@@ -29,3 +40,5 @@ bool setupSlaveXMotorHardware();
 
 // 向真实电机写入目标角，或在硬件关闭时返回仿真角度。
 float applySlaveXMotorTarget(float target_angle_rad, float fallback_actual_angle_rad);
+float runSlaveXMotorPerfIsolationStep(float target_angle_rad, float fallback_actual_angle_rad);
+float applySlaveYMotorTarget(float target_angle_rad, float fallback_actual_angle_rad);

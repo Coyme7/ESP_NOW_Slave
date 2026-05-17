@@ -2,24 +2,59 @@
 
 #include <math.h>
 
+#include "common/math/clamp.h"
 #include "common/protocol/protocol_units.h"
 #include "slave/config/slave_config.h"
 
+namespace {
+
+const SlaveAxisConfig &axisConfig(AxisId axis) {
+    return (axis == AXIS_Y) ? kSlaveYAxis : kSlaveXAxis;
+}
+
+}  // namespace
+
+float slaveAxisHalfRangeMm(AxisId axis) {
+    return axisConfig(axis).half_range_mm;
+}
+
+float slaveAxisNormToPaperMm(AxisId axis, int16_t norm) {
+    return normToUnit(norm) * slaveAxisHalfRangeMm(axis);
+}
+
+float slaveClampAxisPaperMm(AxisId axis, float mm, bool *clamped) {
+    const float half_range_mm = slaveAxisHalfRangeMm(axis);
+    const float min_mm = fmaxf(-half_range_mm, kSlaveAxisLimit.min_mm);
+    const float max_mm = fminf(half_range_mm, kSlaveAxisLimit.max_mm);
+    const float limited = clampFloat(mm, min_mm, max_mm);
+    if (clamped != nullptr) {
+        *clamped = limited != mm;
+    }
+    return limited;
+}
+
+float slaveAxisPaperMmToGimbalAngleRad(AxisId axis, float mm) {
+    const SlaveAxisConfig &config = axisConfig(axis);
+    const float limited_mm = slaveClampAxisPaperMm(axis, mm, nullptr);
+    return config.center_angle_rad +
+           (config.direction * atanf(limited_mm / config.throw_distance_mm));
+}
+
+int16_t slaveAxisGimbalAngleRadToNorm(AxisId axis, float angle_rad) {
+    const SlaveAxisConfig &config = axisConfig(axis);
+    const float axis_angle_rad = (angle_rad - config.center_angle_rad) * config.direction;
+    const float mm = tanf(axis_angle_rad) * config.throw_distance_mm;
+    return unitToNorm(mm / slaveAxisHalfRangeMm(axis));
+}
+
 float slaveXNormToPaperMm(int16_t x_norm) {
-    // x_norm=-1..+1 对应纸面 X=-125..+125mm。
-    return normToUnit(x_norm) * PLOT_X_HALF_RANGE_MM;
+    return slaveAxisNormToPaperMm(AXIS_X, x_norm);
 }
 
 float slavePaperMmToGimbalAngleRad(float x_mm) {
-    // 纸距 300mm、X 半幅 125mm 时，端点角约为 atan(125/300)=22.62deg。
-    const float limited_x_mm = clampFloat(x_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
-    return kSlaveXAxis.center_angle_rad +
-           (kSlaveXAxis.direction * atanf(limited_x_mm / kSlaveXAxis.throw_distance_mm));
+    return slaveAxisPaperMmToGimbalAngleRad(AXIS_X, x_mm);
 }
 
 int16_t slaveGimbalAngleRadToXNorm(float angle_rad) {
-    // 遥测反算：云台角 -> 纸面 X -> 协议归一化坐标。
-    const float axis_angle_rad = (angle_rad - kSlaveXAxis.center_angle_rad) * kSlaveXAxis.direction;
-    const float x_mm = tanf(axis_angle_rad) * kSlaveXAxis.throw_distance_mm;
-    return unitToNorm(x_mm / PLOT_X_HALF_RANGE_MM);
+    return slaveAxisGimbalAngleRadToNorm(AXIS_X, angle_rad);
 }

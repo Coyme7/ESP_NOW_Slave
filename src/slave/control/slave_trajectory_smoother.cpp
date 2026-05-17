@@ -30,9 +30,9 @@ float approachFloat(float current, float target, float max_delta) {
 SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmootherState &state,
                                                             const SlaveTrajectorySmootherInput &input) {
     const float target_x_mm =
-        clampFloat(input.target_x_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
+        clampFloat(input.target_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
     if (!state.initialized) {
-        state.x_mm = 0.0f;
+        state.position_mm = 0.0f;
         state.velocity_mm_s = 0.0f;
         state.initialized = true;
     }
@@ -42,15 +42,15 @@ SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmoot
     const float accel_mm_s2 = fmaxf(input.accel_mm_s2, 1.0f);
     const float deadband_mm = fmaxf(input.deadband_mm, 0.0f);
     if (dt_s <= 0.0f || max_speed_mm_s <= 0.0f) {
-        return {state.x_mm, state.velocity_mm_s};
+        return {state.position_mm, state.velocity_mm_s};
     }
 
-    const float error_mm = target_x_mm - state.x_mm;
+    const float error_mm = target_x_mm - state.position_mm;
     if (fabsf(error_mm) <= deadband_mm &&
         fabsf(state.velocity_mm_s) <= accel_mm_s2 * dt_s) {
-        state.x_mm = target_x_mm;
+        state.position_mm = target_x_mm;
         state.velocity_mm_s = 0.0f;
-        return {state.x_mm, state.velocity_mm_s};
+        return {state.position_mm, state.velocity_mm_s};
     }
 
     const float stop_distance_mm =
@@ -64,12 +64,12 @@ SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmoot
         approachFloat(state.velocity_mm_s, desired_velocity_mm_s, accel_mm_s2 * dt_s);
     const float step_mm = state.velocity_mm_s * dt_s;
     if (fabsf(step_mm) >= fabsf(error_mm)) {
-        state.x_mm = target_x_mm;
+        state.position_mm = target_x_mm;
         state.velocity_mm_s = 0.0f;
     } else {
-        state.x_mm += step_mm;
+        state.position_mm += step_mm;
     }
 
-    state.x_mm = clampFloat(state.x_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
-    return {state.x_mm, state.velocity_mm_s};
+    state.position_mm = clampFloat(state.position_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
+    return {state.position_mm, state.velocity_mm_s};
 }

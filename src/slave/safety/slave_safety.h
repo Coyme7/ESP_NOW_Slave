@@ -2,10 +2,16 @@
 
 #include <stdint.h>
 
+#include "slave/control/slave_runtime_snapshot.h"
+
 // slave_safety
 // 职责：从机命令超时和紫光安全联锁。
 // 运行约束：isSlaveUvAllowed() 只读快照和标量状态；runSlaveSafetyStep() 是 1 kHz
 // 低频安全任务入口，负责唯一的 UV GPIO 写操作。
+
+// 判断实时命令缓存是否新鲜。
+// SlaveRtCommand 表示“最后一次通过校验的命令”；fresh 表示“当前是否未超时”。
+bool isSlaveRtCommandFresh(const SlaveRtCommand &command, uint32_t now_us);
 
 // 判断主机命令是否已经失效。无命令或超过 COMMAND_TIMEOUT_US 都视为超时。
 bool isSlaveCommandTimedOut(uint32_t now_us);

@@ -16,7 +16,7 @@
 #endif
 
 #ifndef MT6701_SSI_TIMING_DIAG_ENABLED
-#define MT6701_SSI_TIMING_DIAG_ENABLED 0
+#define MT6701_SSI_TIMING_DIAG_ENABLED 1
 #endif
 
 // 一帧 SSI 读取结果：原始 24-bit 帧、14-bit 角度和磁场状态。
@@ -59,4 +59,3 @@ private:
     Mt6701SsiFrame last_;
     uint32_t last_read_duration_us_;
 };
-

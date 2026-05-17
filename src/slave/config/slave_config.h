@@ -4,9 +4,20 @@
 
 #include "shared_types.h"
 
-// 当前阶段从机本地控制周期为 200us / 5kHz。该值不属于 common 协议契约。
-static constexpr uint32_t SLAVE_CONTROL_LOOP_PERIOD_US = 200UL;
-static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
+// 运行模式、硬件边界和跨分类静态检查。
+#include "slave/config/slave_build_options.h"
+
+// 日志、状态输出和 timing 诊断。
+// 需要放在 task/control 之前，保证派生的 SLAVE_TIMING_* 宏可被热路径编译期裁剪使用。
+#include "slave/config/slave_log_config.h"
+
+// 任务周期、绑核、优先级和栈。
+#include "slave/config/slave_task_config.h"
+
+// 通信、控制周期和真实硬件开关。
+#include "slave/config/slave_comm_config.h"
+#include "slave/config/slave_control_config.h"
+#include "slave/config/slave_hardware_config.h"
 
 // slave_config
 // 职责：集中从机侧任务调度、X 轴纸面几何和临时电机测试参数。
@@ -17,67 +28,23 @@ static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 // 运行约束：这里只放编译期或只读配置，不访问 GPIO、ESP-NOW 或电机驱动。
 // 后续阶段：正式 2208 云台接回时，通过 SLAVE_X_MOTOR_POLE_PAIRS 和本配置重新标定。
 
-// 默认关闭真实 X 轴电机输出。第一阶段先跑通信闭环、仿真跟随和 UV 安全联锁。
-#ifndef SLAVE_X_MOTOR_HW_ENABLED
-#define SLAVE_X_MOTOR_HW_ENABLED 1
-#endif
-
-// 从机 ESP-NOW 通信开关：实际主从联调默认开启；只在隔离运动/UV 安全排查时临时关闭。
-#ifndef SLAVE_ESPNOW_ENABLED
-#define SLAVE_ESPNOW_ENABLED 1
-#endif
-
-// DengFoc/BLDCDriver3PWM 使能脚默认按高电平有效处理。
-// 如果实测 EN 低电平有效，必须在 build_flags 中设为 0 后再开真实 X 轴输出。
-#ifndef SLAVE_DRIVER_ENABLE_ACTIVE_HIGH
-#define SLAVE_DRIVER_ENABLE_ACTIVE_HIGH 1
-#endif
-
-// Core 1 专门跑 X 轴控制；Core 0 负责 ESP-NOW、UV 安全和串口打印。
-static constexpr BaseType_t SLAVE_CONTROL_CORE = 1;
-static constexpr BaseType_t SLAVE_IO_CORE = 0;
-
-// 控制任务优先级最高；UV 安全高于普通通信/状态，便于及时关闭紫光灯。
-static constexpr UBaseType_t SLAVE_CONTROL_TASK_PRIORITY = configMAX_PRIORITIES - 1;
-static constexpr UBaseType_t SLAVE_COMM_TASK_PRIORITY = 3;
-static constexpr UBaseType_t SLAVE_SAFETY_TASK_PRIORITY = 2;
-static constexpr UBaseType_t SLAVE_STATUS_TASK_PRIORITY = 1;
-
-// 栈大小按当前 Arduino + ESP-NOW + SimpleFOC 组合预留；新增复杂逻辑后要复查水位。
-static constexpr uint32_t SLAVE_CONTROL_TASK_STACK_BYTES = 8192;
-static constexpr uint32_t SLAVE_COMM_TASK_STACK_BYTES = 4096;
-static constexpr uint32_t SLAVE_SAFETY_TASK_STACK_BYTES = 4096;
-static constexpr uint32_t SLAVE_STATUS_TASK_STACK_BYTES = 4096;
-
-// 从机同步诊断阶段降低状态行频率，避免串口输出反向扰动 5 kHz 控制环。
-// 如需观察更密集日志，可在 build_flags 中临时覆盖该值。
-#ifndef SLAVE_STATUS_LOOP_PERIOD_MS
-#define SLAVE_STATUS_LOOP_PERIOD_MS 1000UL
-#endif
-
-#ifndef SLAVE_X_FOC_EVERY_N_STEPS
-#define SLAVE_X_FOC_EVERY_N_STEPS 2UL
-#endif
-
-// FreeRTOS tick 固定为 1 ms；当前从机本地控制周期为 200us。
-static constexpr uint32_t SLAVE_CONTROL_STEPS_PER_TICK = 1000UL / CONTROL_LOOP_PERIOD_US;
-// 从机控制定时器使用 200us esp_timer 节拍，避免高优先级 busy-wait 饿死 Idle。
-static constexpr uint32_t SLAVE_CONTROL_TIMER_PERIOD_US = CONTROL_LOOP_PERIOD_US;
-static constexpr uint32_t SLAVE_CONTROL_TIMER_TIMEOUT_MS = 10UL;
-
-// 从机 X 轴纸面到云台角度的配置。
-// center_angle_rad 是 A4 中心对应的云台角；direction 用来适配机械方向；
-// throw_distance_mm 是紫光灯到纸面的投影距离；settle_error_rad 决定允许开 UV 的误差窗口；
+// 从机单轴纸面到云台角度的配置。
+// center_angle_rad 是纸面中心对应的云台角；direction 用来适配机械方向。
+// half_range_mm 是该轴允许工作半幅；默认 X/Y 都按 -125..+125mm 安全范围限制。
 // simulated_response_alpha 只在真实电机关闭时用于仿真跟随，方便先验证通信和安全逻辑。
-struct SlaveXAxisConfig {
+struct SlaveAxisConfig {
     float center_angle_rad;
     float direction;
     float throw_distance_mm;
+    float half_range_mm;
     float settle_error_rad;
     float simulated_response_alpha;
 };
 
-extern const SlaveXAxisConfig kSlaveXAxis;
+using SlaveXAxisConfig = SlaveAxisConfig;
+
+extern const SlaveAxisConfig kSlaveXAxis;
+extern const SlaveAxisConfig kSlaveYAxis;
 
 // 从机 X 轴真实位置闭环调参入口。
 // 当前只有 X 轴，参数先偏慢偏软，确保能看清方向、收敛和温升。
@@ -109,6 +76,14 @@ struct SlaveTrajectoryConfig {
 };
 
 extern const SlaveTrajectoryConfig kSlaveTrajectory;
+
+// X/Y 软件限位。默认限制到 -125mm..+125mm，目标超限时 clamp 并在状态日志中显示。
+struct SlaveAxisLimitConfig {
+    float min_mm;
+    float max_mm;
+};
+
+extern const SlaveAxisLimitConfig kSlaveAxisLimit;
 
 // 当前单轴联调使用固定主机 MAC。加入配对流程前，从机不会自动扫描主机。
 extern const uint8_t kSlavePeerMasterAddress[6];

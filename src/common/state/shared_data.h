@@ -29,14 +29,28 @@ struct SlaveDebugState {
     volatile float angle_deg;
     volatile float x_pos;
     volatile float y_pos;
-    // 从机目标角度，单位 rad。
+    // 从机 X 轴目标角度，单位 rad。保留旧字段名，兼容当前 X 单轴遥测。
     volatile float target_angle_rad;
-    // 从机实际角度，单位 rad。
+    // 从机 X 轴实际角度，单位 rad。控制步优先使用 motor.shaft_angle，不额外读取编码器。
     volatile float actual_angle_rad;
     // 从机命令纸面 X，单位 mm。
     volatile float target_x_mm;
     // 从机平滑后的纸面 X，单位 mm。
     volatile float smooth_x_mm;
+    // 从机 Y 轴目标角度，单位 rad；Y 硬件关闭时由软件框架或仿真更新。
+    volatile float target_y_angle_rad;
+    // 从机 Y 轴实际角度，单位 rad；Y 硬件关闭时保持仿真或 0。
+    volatile float actual_y_angle_rad;
+    // 从机命令纸面 Y，单位 mm。
+    volatile float target_y_mm;
+    // 从机平滑后的纸面 Y，单位 mm。
+    volatile float smooth_y_mm;
+    // X/Y 目标是否碰到软件限位。
+    volatile bool x_limit_hit;
+    volatile bool y_limit_hit;
+    // X/Y 命令是否被 clamp 到安全范围。
+    volatile bool x_clamped;
+    volatile bool y_clamped;
     volatile bool boundary_hit;
     // 从机 UV/落笔互锁是否阻止输出。
     volatile bool uv_interlock_blocked;

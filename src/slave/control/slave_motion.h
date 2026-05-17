@@ -2,19 +2,29 @@
 
 #include <stdint.h>
 
+#include "slave/control/slave_runtime_snapshot.h"
+
 struct SlaveControlStepTiming {
     uint32_t command_us;
     uint32_t trajectory_us;
     uint32_t motor_us;
-    uint32_t foc_us;
-    uint32_t foc_ran;
-    uint32_t move_us;
-    uint32_t angle_read_us;
+    uint32_t x_sensor_us;
+    uint32_t x_foc_us;
+    uint32_t x_foc_ran;
+    uint32_t x_move_us;
+    uint32_t y_sensor_us;
+    uint32_t y_foc_us;
+    uint32_t y_foc_ran;
+    uint32_t y_move_us;
     uint32_t state_us;
     uint32_t publish_us;
 };
 
 void runSlaveControlStep(float dt_s, SlaveControlStepTiming *timing);
+void runSlaveControlPerfIsolationStep(float dt_s, SlaveControlStepTiming *timing);
+void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing);
+void runSlaveMotorStep(SlaveControlStepTiming *timing);
+SlaveMotionSnapshot snapshotSlaveMotion();
 
 // slave_motion
 // 职责：隔离纸面坐标到云台角度的映射，以及 X 轴本地控制单步。
@@ -30,5 +40,6 @@ float paperMmToGimbalAngleRad(float x_mm);
 // 将云台实际角反推回协议归一化坐标，供遥测 x_actual_norm 使用。
 int16_t gimbalAngleRadToXNorm(float angle_rad);
 
-// 从机 X 轴控制单步：读取命令快照、平滑纸面目标、更新实际角和 fault。
+// 从机 X 轴控制单步：调度低频 planner 和 5kHz motor tick。
 void runSlaveControlStep(float dt_s);
+void runSlaveControlPerfIsolationStep(float dt_s);
