@@ -1,6 +1,6 @@
 #include "common/state/system_state.h"
 
-#include <Arduino.h>
+#include <esp_attr.h>
 
 // 全局监视状态放在内部 RAM，避免跨任务频繁读写落到外部存储。
 // common 只承载链路/故障状态，主机和从机调试字段分别放在各自子结构中。
@@ -39,6 +39,11 @@ uint16_t getActiveFaultFlags() {
 
 uint16_t getLatchedFaultFlags() {
     return local_fault_flags;
+}
+
+void clearLocalFaults() {
+    local_fault_flags = FAULT_NONE;
+    sysData.link.protocol_fault_flags = active_fault_flags;
 }
 
 // 把远端或运行时故障与本地锁存故障合并。

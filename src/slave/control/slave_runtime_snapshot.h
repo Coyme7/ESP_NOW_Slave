@@ -10,12 +10,10 @@ struct SlaveRtCommand {
     uint32_t seq;
     uint32_t last_rx_us;
     uint8_t mode;
-    uint8_t pen_down;
+    uint8_t pen_req;
+    uint16_t command_flags;
     uint8_t valid;
 };
-
-// 兼容旧名称。新代码优先使用 SlaveRtCommand。
-using SlaveControlInputSnapshot = SlaveRtCommand;
 
 // 控制任务发布给 safety / telemetry / status 的运动快照。
 // 该结构只表达运动与命令状态；timing 诊断统一走 SlaveControlHealthSnapshot，
@@ -38,8 +36,14 @@ struct SlaveMotionSnapshot {
     bool y_clamped;
     bool boundary_hit;
     uint8_t command_valid;
-    uint8_t pen_down;
+    uint8_t pen_req;
+    uint8_t draw_state;
+    uint8_t draw_progress_pct;
+    uint16_t trajectory_task_id;
+    uint8_t trajectory_segment_count;
+    uint8_t trajectory_segment_cursor;
+    uint8_t trajectory_received_count;
+    uint8_t trajectory_status_flags;
+    uint32_t trajectory_received_mask_low;
+    uint16_t trajectory_received_mask_high;
 };
-
-// 兼容旧名称。后续旧引用迁移完后可删除。
-using SlaveControlOutputSnapshot = SlaveMotionSnapshot;

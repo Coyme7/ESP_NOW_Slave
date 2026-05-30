@@ -16,6 +16,9 @@ uint16_t getActiveFaultFlags();
 // 读取历史锁存故障位，语义等同于 getLocalFaultFlags()。
 uint16_t getLatchedFaultFlags();
 
+// 清除本机历史锁存故障。只允许低频诊断命令调用，不能从控制热路径调用。
+void clearLocalFaults();
+
 // 将对端回传或当前步骤产生的故障与本机锁存故障合并。
 uint16_t combineWithLocalFaults(uint16_t remote_or_runtime_faults);
 

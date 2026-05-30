@@ -16,5 +16,8 @@ enum FaultFlags : uint16_t {
     FAULT_TARGET_LIMITED = 1u << 7,
     FAULT_UV_INTERLOCK = 1u << 8,
     FAULT_TELEMETRY_TIMEOUT = 1u << 9,
+    FAULT_ENCODER_INVALID = 1u << 10,
+    FAULT_LINK_STATE = 1u << 11,
+    FAULT_PEN_STATE = 1u << 12,
+    FAULT_TRAJECTORY_INVALID = 1u << 13,
 };
-

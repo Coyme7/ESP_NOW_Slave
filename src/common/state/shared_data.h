@@ -4,7 +4,7 @@
 
 // 主机调试状态：由控制热路径低频发布，状态任务负责打印。
 struct MasterDebugState {
-    // 角度，单位由所属结构语义决定：主机为控制角，从机为遥测角。
+    // 兼容旧字段：主机 X 旋钮控制角，单位 deg。
     volatile float angle_deg;
     // 主机力反馈最终目标电流，单位 A。
     volatile float target_current_a;
@@ -26,6 +26,7 @@ struct MasterDebugState {
 
 // 从机遥测状态：由主机通信回调解析从机包后更新。
 struct SlaveDebugState {
+    // 兼容旧字段：从机 X 轴实际角度，单位 deg。
     volatile float angle_deg;
     volatile float x_pos;
     volatile float y_pos;
@@ -54,6 +55,22 @@ struct SlaveDebugState {
     volatile bool boundary_hit;
     // 从机 UV/落笔互锁是否阻止输出。
     volatile bool uv_interlock_blocked;
+    // 从机 pen 状态机状态，取 PenState。
+    volatile uint8_t pen_state;
+    // 从机自动绘图状态，取 DrawState。
+    volatile uint8_t draw_state;
+    // 自动绘图进度百分比，范围 0..100。
+    volatile uint8_t draw_progress_pct;
+    // 自动绘图轨迹传输/执行状态，来自从机本地轨迹状态。
+    volatile uint16_t trajectory_task_id;
+    volatile uint8_t trajectory_segment_count;
+    volatile uint8_t trajectory_segment_cursor;
+    volatile uint8_t trajectory_received_count;
+    volatile uint8_t trajectory_status_flags;
+    volatile uint32_t trajectory_received_mask_low;
+    volatile uint16_t trajectory_received_mask_high;
+    // UV 被禁止的具体原因位，取 UvBlockReason。
+    volatile uint16_t uv_block_reasons;
 };
 
 // 全局共享状态容器。当前工程用轻量方式访问，热路径只写少量字段。

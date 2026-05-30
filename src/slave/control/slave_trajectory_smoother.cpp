@@ -29,8 +29,9 @@ float approachFloat(float current, float target, float max_delta) {
 
 SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmootherState &state,
                                                             const SlaveTrajectorySmootherInput &input) {
-    const float target_x_mm =
-        clampFloat(input.target_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
+    const float min_mm = fminf(input.min_mm, input.max_mm);
+    const float max_mm = fmaxf(input.min_mm, input.max_mm);
+    const float target_mm = clampFloat(input.target_mm, min_mm, max_mm);
     if (!state.initialized) {
         state.position_mm = 0.0f;
         state.velocity_mm_s = 0.0f;
@@ -45,10 +46,10 @@ SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmoot
         return {state.position_mm, state.velocity_mm_s};
     }
 
-    const float error_mm = target_x_mm - state.position_mm;
+    const float error_mm = target_mm - state.position_mm;
     if (fabsf(error_mm) <= deadband_mm &&
         fabsf(state.velocity_mm_s) <= accel_mm_s2 * dt_s) {
-        state.position_mm = target_x_mm;
+        state.position_mm = target_mm;
         state.velocity_mm_s = 0.0f;
         return {state.position_mm, state.velocity_mm_s};
     }
@@ -64,12 +65,12 @@ SlaveTrajectorySmootherOutput updateSlaveTrajectorySmoother(SlaveTrajectorySmoot
         approachFloat(state.velocity_mm_s, desired_velocity_mm_s, accel_mm_s2 * dt_s);
     const float step_mm = state.velocity_mm_s * dt_s;
     if (fabsf(step_mm) >= fabsf(error_mm)) {
-        state.position_mm = target_x_mm;
+        state.position_mm = target_mm;
         state.velocity_mm_s = 0.0f;
     } else {
         state.position_mm += step_mm;
     }
 
-    state.position_mm = clampFloat(state.position_mm, -PLOT_X_HALF_RANGE_MM, PLOT_X_HALF_RANGE_MM);
+    state.position_mm = clampFloat(state.position_mm, min_mm, max_mm);
     return {state.position_mm, state.velocity_mm_s};
 }

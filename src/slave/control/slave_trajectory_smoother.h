@@ -10,6 +10,8 @@ struct SlaveTrajectorySmootherState {
 
 struct SlaveTrajectorySmootherInput {
     float target_mm;
+    float min_mm;
+    float max_mm;
     float dt_s;
     float max_speed_mm_s;
     float accel_mm_s2;

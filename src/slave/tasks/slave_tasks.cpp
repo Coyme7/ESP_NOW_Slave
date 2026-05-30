@@ -4,8 +4,10 @@
 #include <esp_timer.h>
 
 #include "common/system_state.h"
+#include "common/timing/link_timing.h"
 #include "slave/config/slave_config.h"
 #include "slave/control/slave_motion.h"
+#include "slave/modes/mode_traits.h"
 #include "slave/safety/slave_safety.h"
 #include "slave/status/slave_status.h"
 #include "slave/comm/slave_transport.h"
@@ -20,7 +22,7 @@ TaskHandle_t controlTaskHandle = nullptr;
 esp_timer_handle_t controlTimerHandle = nullptr;
 volatile uint32_t controlTimerMissedTicks = 0;
 volatile uint32_t controlTimerLastDtUs = 0;
-#if SLAVE_TIMING_DIAG_ENABLED
+#if SLAVE_TIMING_STEP_DIAG_ENABLED
 volatile uint32_t controlTimerMaxDtUs = 0;
 volatile uint32_t controlStepLastUs = 0;
 volatile uint32_t controlStepMaxUs = 0;
@@ -64,17 +66,11 @@ void updateMaxUs(volatile uint32_t &slot, uint32_t value) {
 #endif
 
 constexpr bool controlRunsXAxisForTiming() {
-    return SLAVE_X_MOTOR_HW_ENABLED &&
-           (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_SYNC ||
-            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_FRAME ||
-            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_HW);
+    return SLAVE_X_MOTOR_HW_ENABLED && slaveRunModeDrivesAxis(AXIS_X);
 }
 
 constexpr bool controlRunsYAxisForTiming() {
-    return SLAVE_Y_MOTOR_HW_ENABLED &&
-           (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_SYNC ||
-            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_FRAME ||
-            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_HW);
+    return SLAVE_Y_MOTOR_HW_ENABLED && slaveRunModeDrivesAxis(AXIS_Y);
 }
 
 void IRAM_ATTR controlTimerCallback(void *arg) {
@@ -148,7 +144,7 @@ void task_control_loop(void *pvParameters) {
     }
 
     while (true) {
-        // 等待 200us 控制定时器通知。任务在通知之间阻塞，让 CPU1 Idle 能运行。
+        // 等待控制定时器通知。任务在通知之间阻塞，让 CPU1 Idle 能运行。
         const uint32_t pending_ticks =
             ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SLAVE_CONTROL_TIMER_TIMEOUT_MS));
         if (pending_ticks == 0) {
@@ -163,15 +159,15 @@ void task_control_loop(void *pvParameters) {
         const uint32_t now_us = micros();
         const uint32_t control_dt_us = now_us - previous_us;
         controlTimerLastDtUs = control_dt_us;
-#if SLAVE_TIMING_DIAG_ENABLED
+#if SLAVE_TIMING_STEP_DIAG_ENABLED
         if (controlTimerLastDtUs > controlTimerMaxDtUs) {
             controlTimerMaxDtUs = controlTimerLastDtUs;
         }
 #endif
         previous_us = now_us;
 
-        // 从机控制热路径入口：5kHz motor tick；planner 按配置分频运行。
-#if SLAVE_TIMING_DIAG_ENABLED
+        // 从机控制热路径入口：motor tick 按 SLAVE_CONTROL_LOOP_PERIOD_US 运行；planner 按配置分频运行。
+#if SLAVE_TIMING_STEP_DIAG_ENABLED
         const uint32_t step_start_us = micros();
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         SlaveControlStepTiming step_timing = {};
@@ -222,7 +218,7 @@ void task_control_loop(void *pvParameters) {
 #else
         runSlaveControlStep(static_cast<float>(control_dt_us) * 0.000001f, nullptr);
 #endif
-#if SLAVE_TIMING_DIAG_ENABLED
+#if SLAVE_TIMING_STEP_DIAG_ENABLED
         if (controlStepLastUs > SLAVE_CONTROL_LOOP_PERIOD_US) {
             controlStepOverPeriodCount++;
         }
@@ -284,6 +280,7 @@ void task_status_loop(void *pvParameters) {
     (void)pvParameters;
 
     while (true) {
+        processSlaveDiagShell();
         // 串口打印限频到 STATUS_LOOP_PERIOD_MS，避免扰动无线和控制。
         printSlaveStatusLine();
         vTaskDelay(pdMS_TO_TICKS(SLAVE_STATUS_LOOP_PERIOD_MS));
@@ -346,7 +343,7 @@ SlaveControlHealthSnapshot getSlaveControlHealthSnapshot() {
     snapshot.missed_total = missed_total;
     previous_missed_total = missed_total;
 
-#if SLAVE_TIMING_DIAG_ENABLED
+#if SLAVE_TIMING_STEP_DIAG_ENABLED
     static uint32_t previous_step_over_period_count = 0;
     static uint32_t previous_step_over_75pct_count = 0;
     static uint32_t previous_step_over_50pct_count = 0;

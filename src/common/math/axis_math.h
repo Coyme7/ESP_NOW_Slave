@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-// 主从 XY 框架共用的轴标识。当前默认只启用 X 轴，Y 轴仅作为软件框架和后续 bring-up 入口。
+// 主从 XY 框架共用的轴标识。X/Y 是否接入真实硬件由各工程 build flags 独立决定。
 enum AxisId : uint8_t {
     AXIS_X = 0,
     AXIS_Y = 1,

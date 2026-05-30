@@ -3,13 +3,13 @@
 #include <SPI.h>
 #include <SimpleFOC.h>
 
-#include "slave/config/slave_log_config.h"
+#include "slave/config/diagnostics/slave_log_config.h"
 
 #ifndef MT6701_SSI_TIMING_DIAG_ENABLED
 #define MT6701_SSI_TIMING_DIAG_ENABLED SLAVE_TIMING_DETAIL_DIAG_ENABLED
 #endif
 
-#include "common/sensors/mt6701_ssi_sensor.h"
+#include "drivers/mt6701_ssi_sensor.h"
 
 // 从机本地 SimpleFOC 适配层。
 // 内部复用 common 的 MT6701 fast reader，控制热路径禁止 digitalWrite、SPI transaction 和三次 transfer 慢路径。

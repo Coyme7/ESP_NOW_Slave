@@ -7,3 +7,6 @@
 // 打印一行从机状态：接收序号、命令 X、实际 X、目标/实际角、跟踪误差、
 // UV 输出、UV 联锁、ESP-NOW 计数、包龄和故障位。
 void printSlaveStatusLine();
+
+// 处理串口诊断命令。只在 Core 0 低频状态任务中调用。
+void processSlaveDiagShell();

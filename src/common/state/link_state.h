@@ -7,13 +7,16 @@
 
 // 链路状态只记录通信健康信息，不包含主机电流环或从机位置环内部细节。
 struct CommonLinkState {
-    // 当前实际 UV/pen 输出状态。
-    // 注意：它不等价于主机命令中的 pen_down；主机命令落笔意图保存在 SlaveRtCommand。
-    volatile bool pen_down;
+    // 主机落笔请求。实际 UV 输出必须看 uv_out，不能把请求当作输出。
+    volatile bool pen_req;
+    // 从机实际 UV 输出状态。主机侧由 telemetry 回填，从机侧由硬件输出层写入。
+    volatile bool uv_out;
     // 最近命令/链路状态是否有效。
     volatile bool command_valid;
     // 当前系统模式。
     volatile uint8_t current_mode;
+    // 链路状态：启动、连接、退化、超时或故障。
+    volatile uint8_t link_state;
     // 协议层故障位，如超时、校验失败等。
     volatile uint16_t protocol_fault_flags;
     // 最近发送的主机命令序号。
@@ -45,7 +48,7 @@ struct CommonLinkState {
 inline CommonLinkState makeDefaultCommonLinkState() {
     CommonLinkState state = {};
     state.current_mode = MODE_COLLAB_DRAW;
+    state.link_state = LINK_BOOT;
     state.protocol_fault_flags = FAULT_NONE;
     return state;
 }
-

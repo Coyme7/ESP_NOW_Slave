@@ -5,14 +5,18 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 
+#include "common/protocol/packet_codec.h"
 #include "common/system_state.h"
 #include "slave/config/slave_config.h"
 #include "slave/hardware/slave_hardware.h"
 #include "slave/control/slave_motion.h"
 #include "slave/control/slave_coordinate_mapper.h"
+#include "slave/modes/mode_guard.h"
+#include "slave/modes/mode_manager.h"
 
 // 从机 ESP-NOW 传输模块。
-// 这里是无线包进出的唯一位置：从机接收 MasterCommandPacket，发送 SlaveTelemetryPacket。
+// 这里是无线包进出的唯一位置：从机接收 MasterCommandPacket / TrajectorySegmentPacket，
+// 发送 SlaveTelemetryPacket。
 // 运动控制和 UV 安全只读取已校验的命令快照，不直接依赖 ESP-NOW 回调参数。
 
 namespace {
@@ -21,6 +25,7 @@ namespace {
 // rtCommand 是控制 planner 读取的紧凑实时命令缓存，避免热路径复制完整包。
 MasterCommandPacket rxPacket = {};
 MasterCommandPacket rxPendingPacket = {};
+TrajectorySegmentPacket rxPendingTrajectoryPacket = {};
 SlaveRtCommand rtCommand = {};
 SlaveTelemetryPacket txPacket = {};
 portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
@@ -28,8 +33,12 @@ portMUX_TYPE commandPendingMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE telemetryMux = portMUX_INITIALIZER_UNLOCKED;
 volatile bool rxPending = false;
 volatile int rxPacketLen = 0;
+volatile bool rxTrajectoryPending = false;
+volatile int rxTrajectoryPacketLen = 0;
 bool hasAcceptedCommand = false;
 uint32_t lastAcceptedCommandSeq = 0;
+bool hasAcceptedTrajectorySegment = false;
+uint32_t lastAcceptedTrajectorySeq = 0;
 
 void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
     (void)mac;
@@ -68,11 +77,23 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     (void)mac;
     // 回调只复制最新 raw packet，不做协议校验、seq 判断、fault 更新或 sysData 写入。
     portENTER_CRITICAL(&commandPendingMux);
-    rxPacketLen = (incomingData != nullptr) ? len : 0;
-    if (rxPacketLen > 0 && rxPacketLen <= static_cast<int>(sizeof(rxPendingPacket))) {
-        memcpy(&rxPendingPacket, incomingData, static_cast<size_t>(rxPacketLen));
+    const int packet_len = (incomingData != nullptr) ? len : 0;
+    const uint8_t packet_type =
+        (incomingData != nullptr && packet_len >= 4) ? incomingData[3] : 0U;
+
+    if (packet_type == PACKET_TYPE_TRAJECTORY_SEGMENT) {
+        rxTrajectoryPacketLen = packet_len;
+        if (packet_len > 0 && packet_len <= static_cast<int>(sizeof(rxPendingTrajectoryPacket))) {
+            memcpy(&rxPendingTrajectoryPacket, incomingData, static_cast<size_t>(packet_len));
+        }
+        rxTrajectoryPending = true;
+    } else {
+        rxPacketLen = packet_len;
+        if (packet_len > 0 && packet_len <= static_cast<int>(sizeof(rxPendingPacket))) {
+            memcpy(&rxPendingPacket, incomingData, static_cast<size_t>(packet_len));
+        }
+        rxPending = true;
     }
-    rxPending = true;
     portEXIT_CRITICAL(&commandPendingMux);
 }
 
@@ -85,8 +106,8 @@ void setupSlaveEspNow() {
     (void)esp_wifi_set_ps(WIFI_PS_NONE);
     (void)esp_wifi_set_channel(SLAVE_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     if (esp_now_init() != ESP_OK) {
-        // 无线初始化失败时强制关 UV，并锁存命令超时类故障，方便串口暴露问题。
-        setUvPen(false);
+        // 无线初始化失败时锁存命令超时类故障；UV 输出只由启动安全态和 safety 任务负责。
+        sysData.link.link_state = LINK_FAULT;
         addLocalFault(FAULT_COMMAND_TIMEOUT);
         return;
     }
@@ -100,7 +121,10 @@ void setupSlaveEspNow() {
     peerInfo.channel = SLAVE_ESPNOW_CHANNEL;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        sysData.link.link_state = LINK_PAIRING;
         addLocalFault(FAULT_COMMAND_TIMEOUT);
+    } else {
+        sysData.link.link_state = LINK_PAIRING;
     }
 }
 
@@ -143,14 +167,51 @@ SlaveRtCommand snapshotSlaveRtCommand() {
     return snapshot;
 }
 
-SlaveControlInputSnapshot snapshotSlaveControlInput() {
-    return snapshotSlaveRtCommand();
+void processTrajectorySegmentPacket(const TrajectorySegmentPacket &packet, int packet_len) {
+    if (packet_len != static_cast<int>(sizeof(TrajectorySegmentPacket))) {
+        recordRejectedCommandFault(FAULT_PACKET_SIZE);
+        return;
+    }
+
+    if (!validateTrajectorySegment(packet)) {
+        recordRejectedCommandFault((packet.version == PROTOCOL_VERSION) ? FAULT_CHECKSUM_ERROR : FAULT_VERSION_MISMATCH);
+        return;
+    }
+
+    const SlaveRtCommand command = snapshotSlaveRtCommand();
+    if (!slaveCommandRequestsTrajectory(command)) {
+        recordRejectedCommandFault(FAULT_TRAJECTORY_INVALID);
+        return;
+    }
+
+    if (hasAcceptedTrajectorySegment) {
+        if (packet.seq == lastAcceptedTrajectorySeq) {
+            recordDuplicateCommandOnly(packet.seq);
+            return;
+        }
+        if (!isNewerSeq(packet.seq, lastAcceptedTrajectorySeq)) {
+            recordStaleCommandOnly(packet.seq);
+            return;
+        }
+    }
+
+    if (!acceptSlaveTrajectorySegment(packet, micros())) {
+        recordRejectedCommandFault(FAULT_TRAJECTORY_INVALID);
+        return;
+    }
+
+    sysData.link.espnow_recv_ok_count++;
+    hasAcceptedTrajectorySegment = true;
+    lastAcceptedTrajectorySeq = packet.seq;
 }
 
 void processSlaveCommand() {
     MasterCommandPacket packet = {};
     int packet_len = 0;
     bool has_packet = false;
+    TrajectorySegmentPacket trajectory_packet = {};
+    int trajectory_packet_len = 0;
+    bool has_trajectory_packet = false;
 
     portENTER_CRITICAL(&commandPendingMux);
     if (rxPending) {
@@ -161,7 +222,19 @@ void processSlaveCommand() {
         rxPending = false;
         has_packet = true;
     }
+    if (rxTrajectoryPending) {
+        trajectory_packet_len = rxTrajectoryPacketLen;
+        if (trajectory_packet_len == static_cast<int>(sizeof(trajectory_packet))) {
+            trajectory_packet = rxPendingTrajectoryPacket;
+        }
+        rxTrajectoryPending = false;
+        has_trajectory_packet = true;
+    }
     portEXIT_CRITICAL(&commandPendingMux);
+
+    if (has_trajectory_packet) {
+        processTrajectorySegmentPacket(trajectory_packet, trajectory_packet_len);
+    }
 
     if (!has_packet) {
         return;
@@ -173,7 +246,7 @@ void processSlaveCommand() {
         return;
     }
 
-    // 版本/type/checksum 任一不匹配都会拒收。版本不一致通常表示两端代码或协议文档漂移。
+    // magic/version/type/CRC 任一不匹配都会拒收。版本不一致通常表示两端代码或协议文档漂移。
     if (!validateMasterCommand(packet)) {
         recordRejectedCommandFault((packet.version == PROTOCOL_VERSION) ? FAULT_CHECKSUM_ERROR : FAULT_VERSION_MISMATCH);
         return;
@@ -194,15 +267,21 @@ void processSlaveCommand() {
     }
 
     const uint32_t now_us = micros();
+    const uint8_t accepted_protocol_mode =
+        slaveAcceptedProtocolModeForCommand(packet.mode, packet.command_flags);
     const SlaveRtCommand next_command = {
         packet.x_norm,
         packet.y_norm,
         packet.seq,
         now_us,
-        packet.mode,
-        packet.pen_down,
+        accepted_protocol_mode,
+        packet.pen_req,
+        packet.command_flags,
         1U,
     };
+
+    // runtime app mode 由已校验协议语义驱动；SLAVE_RUN_MODE 只限制编译期能力。
+    updateSlaveRuntimeModeFromCommand(packet.mode, packet.command_flags, now_us / 1000UL);
 
     // 通过校验后才发布命令快照。临界区只包住结构体赋值，保持通信任务可预期。
     portENTER_CRITICAL(&commandMux);
@@ -213,10 +292,11 @@ void processSlaveCommand() {
     // 更新给控制、安全和状态任务使用的标量状态。
     sysData.master.x_pos = normToPercent(packet.x_norm);
     sysData.master.y_pos = normToPercent(packet.y_norm);
-    sysData.link.current_mode = packet.mode;
+    sysData.link.current_mode = accepted_protocol_mode;
     sysData.link.last_command_seq = packet.seq;
     sysData.link.last_rx_us = now_us;
     sysData.link.command_valid = true;
+    sysData.link.link_state = LINK_CONNECTED;
     sysData.link.espnow_recv_ok_count++;
     hasAcceptedCommand = true;
     lastAcceptedCommandSeq = packet.seq;
@@ -235,17 +315,29 @@ void sendSlaveTelemetry(uint32_t seq) {
         faults |= FAULT_UV_INTERLOCK;
     }
 
-    // 遥测包回传实际 X/Y、pen 输出状态、模式和 ack_seq。
+    // 遥测包回传实际 X/Y、pen 状态机、UV 实际输出、最近接受的链路语义和 ack_seq。
     // ack_seq 是从机最近接受的主机命令序号，主机可用它判断链路闭环是否通畅。
     SlaveTelemetryPacket packet = {};
     packet.fault_flags = faults;
     packet.seq = seq;
     packet.ack_seq = command.seq;
     packet.timestamp_us = micros();
-    packet.x_actual_norm = gimbalAngleRadToXNorm(motion.actual_angle_rad);
+    packet.x_actual_norm = slaveAxisGimbalAngleRadToNorm(AXIS_X, motion.actual_angle_rad);
     packet.y_actual_norm = slaveAxisGimbalAngleRadToNorm(AXIS_Y, motion.actual_y_angle_rad);
-    packet.pen_state = sysData.link.pen_down ? 1 : 0;
+    packet.pen_state = sysData.slave.pen_state;
     packet.mode = sysData.link.current_mode;
+    packet.uv_block_reasons = sysData.slave.uv_block_reasons;
+    packet.draw_state = motion.draw_state;
+    packet.draw_progress_pct = motion.draw_progress_pct;
+    packet.link_state = sysData.link.link_state;
+    packet.uv_out = sysData.link.uv_out ? 1 : 0;
+    packet.trajectory_task_id = motion.trajectory_task_id;
+    packet.trajectory_segment_count = motion.trajectory_segment_count;
+    packet.trajectory_segment_cursor = motion.trajectory_segment_cursor;
+    packet.trajectory_received_count = motion.trajectory_received_count;
+    packet.trajectory_status_flags = motion.trajectory_status_flags;
+    packet.trajectory_received_mask_low = motion.trajectory_received_mask_low;
+    packet.trajectory_received_mask_high = motion.trajectory_received_mask_high;
     finalizeSlaveTelemetry(packet);
 
     // 保存最近一次遥测包，便于后续扩展状态读取或调试。

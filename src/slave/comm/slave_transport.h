@@ -1,10 +1,10 @@
 #pragma once
 
-#include "shared_types.h"
+#include "common/protocol/protocol_types.h"
 #include "slave/control/slave_runtime_snapshot.h"
 
 // slave_transport
-// 职责：从机 ESP-NOW 初始化、接收主机命令、发送 SlaveTelemetry，并维护命令快照。
+// 职责：从机 ESP-NOW 初始化、接收主机命令/轨迹段、发送 SlaveTelemetry，并维护命令快照。
 // 回调约束：只复制 raw packet、记录长度并设置 pending flag；
 // 校验、序号判断、fault 和 sysData 更新全部放在 SlaveComm 任务中执行。
 
@@ -19,9 +19,6 @@ MasterCommandPacket snapshotMasterCommand();
 
 // 读取通信任务校验后的实时命令缓存，供 planner、安全和状态任务使用。
 SlaveRtCommand snapshotSlaveRtCommand();
-
-// 读取控制路径使用的紧凑命令快照，保留旧入口以兼容现有调用。
-SlaveControlInputSnapshot snapshotSlaveControlInput();
 
 // 由 Core 0 通信任务调用，处理 ESP-NOW 回调留下的最新 pending 命令。
 void processSlaveCommand();
