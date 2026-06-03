@@ -77,9 +77,6 @@ static_assert(!(SLAVE_UV_HW_ENABLED && !SLAVE_DUAL_XY_HARDWARE_ENABLED),
               "SLAVE_UV_HW_ENABLED requires SLAVE_DUAL_XY_HARDWARE_ENABLED");
 static_assert(!(SLAVE_UV_HW_ENABLED && !SLAVE_ESPNOW_ENABLED),
               "SLAVE_UV_HW_ENABLED requires SLAVE_ESPNOW_ENABLED");
-static_assert(!(SLAVE_UV_HW_ENABLED && !SLAVE_AUTO_DRAW_ENABLED),
-              "SLAVE_UV_HW_ENABLED requires SLAVE_AUTO_DRAW_ENABLED");
-
 static_assert(SLAVE_FAST_SENSOR_READER_ENABLED,
               "Slave control hot path requires MT6701 fast reader");
 static_assert(SLAVE_ESPNOW_CHANNEL >= 1 && SLAVE_ESPNOW_CHANNEL <= 14,

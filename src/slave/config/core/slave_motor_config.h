@@ -27,8 +27,8 @@ static constexpr float kSlaveOpenLoopVoltageLimitV = 0.4f;
 static constexpr SlaveMotorFocConfig kSlaveXMotorFoc = {
     {
         12.0f,                       // 驱动供电电压，单位 V。
-        2.0f,                        // 驱动输出电压上限，单位 V。
-        1.5f,                        // 闭环电机电压上限，单位 V。
+        2.7f,                        // 驱动输出电压上限，单位 V。
+        2.2f,                        // 闭环电机电压上限，单位 V。
         kSlaveOpenLoopVoltageLimitV, // 开环电机电压上限，单位 V。
         0.6f,                        // FOC 对齐电压，单位 V。
     },
@@ -39,22 +39,22 @@ static constexpr SlaveMotorFocConfig kSlaveXMotorFoc = {
         8.0f, // 位置环 P 增益。
     },
     {
-        0.18f,  // 速度环 P 增益。
-        2.0f,   // 速度环 I 增益。
+        0.25f,  // 速度环 P 增益。
+        3.0f,   // 速度环 I 增益。
         0.0f,   // 速度环 D 增益。
-        100.0f, // 速度环输出变化斜率限制。
+        500.0f, // 速度环输出变化斜率限制。
     },
     {
-        0.01f, // 速度反馈低通时间常数，单位 s。
-        0.0f,  // 角度反馈低通时间常数，单位 s。
+        0.01f,  // 速度反馈低通时间常数，单位 s。
+        0.001f, // 角度反馈低通时间常数，单位 s。
     },
 };
 
 static constexpr SlaveMotorFocConfig kSlaveYMotorFoc = {
     {
         12.0f,                       // 驱动供电电压，单位 V。
-        2.0f,                        // 驱动输出电压上限，单位 V。
-        1.5f,                        // 闭环电机电压上限，单位 V。
+        2.7f,                        // 驱动输出电压上限，单位 V。
+        2.2f,                        // 闭环电机电压上限，单位 V。
         kSlaveOpenLoopVoltageLimitV, // 开环电机电压上限，单位 V。
         0.6f,                        // FOC 对齐电压，单位 V。
     },
@@ -65,13 +65,13 @@ static constexpr SlaveMotorFocConfig kSlaveYMotorFoc = {
         8.0f, // 位置环 P 增益。
     },
     {
-        0.18f,  // 速度环 P 增益。
-        2.0f,   // 速度环 I 增益。
+        0.25f,  // 速度环 P 增益。
+        3.0f,   // 速度环 I 增益。
         0.0f,   // 速度环 D 增益。
-        100.0f, // 速度环输出变化斜率限制。
+        500.0f, // 速度环输出变化斜率限制。
     },
     {
-        0.01f, // 速度反馈低通时间常数，单位 s。
-        0.0f,  // 角度反馈低通时间常数，单位 s。
+        0.01f,  // 速度反馈低通时间常数，单位 s。
+        0.001f, // 角度反馈低通时间常数，单位 s。
     },
 };

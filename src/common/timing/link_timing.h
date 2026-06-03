@@ -7,7 +7,7 @@
 static constexpr uint32_t COMMAND_TIMEOUT_US = 50000UL;
 static constexpr uint32_t TELEMETRY_TIMEOUT_US = 50000UL;
 
-// 主机命令发送：约 333 Hz，用于 X/Y/pen 最新命令发布。
-static constexpr uint32_t MASTER_COMMAND_PERIOD_MS = 3UL;
+// 主机命令发送：约 500 Hz，用于 X/Y/pen 最新命令发布。
+static constexpr uint32_t MASTER_COMMAND_PERIOD_MS = 2UL;
 // 从机遥测回传：50 Hz 起步，先降低无线和串口观测干扰，稳定后可提升到 100 Hz。
 static constexpr uint32_t SLAVE_TELEMETRY_PERIOD_MS = 20UL;

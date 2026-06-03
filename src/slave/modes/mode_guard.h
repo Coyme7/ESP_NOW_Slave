@@ -16,4 +16,5 @@ constexpr bool slaveProtocolModeAllowsRemoteTarget(uint8_t protocol_mode) {
 bool slaveAppModeIsDrawMode();
 bool slaveAppModeIsDryRun();
 bool slaveCommandRequestsTrajectory(const SlaveRtCommand &command);
+bool slaveCommandUsesManualContinuousUv(const SlaveRtCommand &command);
 bool slaveModeAllowsUv(const SlaveRtCommand &command);

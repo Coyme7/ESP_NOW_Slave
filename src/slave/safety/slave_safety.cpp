@@ -77,12 +77,14 @@ uint16_t evaluateSlaveUvBlockReasons(uint32_t now_us) {
         reasons |= UV_BLOCK_Y_INVALID;
     }
 
-    // 只有平滑目标接近命令目标，且实际角度足够接近目标角度，才认为光斑稳定到可落笔位置。
-    const float smoothing_error_x_mm = fabsf(motion.target_x_mm - motion.smooth_x_mm);
-    const float smoothing_error_y_mm = fabsf(motion.target_y_mm - motion.smooth_y_mm);
-    if (smoothing_error_x_mm > kSlaveXTrajectory.settle_error_mm ||
-        smoothing_error_y_mm > kSlaveYTrajectory.settle_error_mm) {
-        reasons |= UV_BLOCK_NOT_SETTLED;
+    // AutoDraw/点位曝光仍要求 smooth 接近命令目标；ManualDraw 连续绘图只跟随 smooth 轨迹。
+    if (!slaveCommandUsesManualContinuousUv(command)) {
+        const float smoothing_error_x_mm = fabsf(motion.target_x_mm - motion.smooth_x_mm);
+        const float smoothing_error_y_mm = fabsf(motion.target_y_mm - motion.smooth_y_mm);
+        if (smoothing_error_x_mm > kSlaveXTrajectory.settle_error_mm ||
+            smoothing_error_y_mm > kSlaveYTrajectory.settle_error_mm) {
+            reasons |= UV_BLOCK_NOT_SETTLED;
+        }
     }
 
     const float x_tracking_error_rad = fabsf(motion.target_angle_rad - motion.actual_angle_rad);

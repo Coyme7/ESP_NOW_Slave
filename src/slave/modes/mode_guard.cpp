@@ -25,11 +25,27 @@ bool slaveCommandRequestsTrajectory(const SlaveRtCommand &command) {
            command.mode == MODE_DUALXY_DRAW_UV;
 }
 
+bool slaveCommandUsesManualContinuousUv(const SlaveRtCommand &command) {
+    return SLAVE_UV_HW_ENABLED &&
+           command.valid != 0 &&
+           command.pen_req != 0 &&
+           currentSlaveAppMode() == SLAVE_APP_MODE_MANUAL_DRAW &&
+           command.mode == MODE_COLLAB_DRAW &&
+           (command.command_flags & PACKET_FLAG_DRY_RUN) == 0;
+}
+
 bool slaveModeAllowsUv(const SlaveRtCommand &command) {
     const ModeCapability capability = slaveModeCapability();
-    return SLAVE_UV_HW_ENABLED &&
-           currentSlaveAppMode() == SLAVE_APP_MODE_AUTO_DRAW &&
-           modeHasCapability(capability, MODE_CAP_UV) &&
-           command.mode == MODE_DUALXY_DRAW_UV &&
-           (command.command_flags & PACKET_FLAG_DRY_RUN) == 0;
+    if (!SLAVE_UV_HW_ENABLED ||
+        !modeHasCapability(capability, MODE_CAP_UV) ||
+        (command.command_flags & PACKET_FLAG_DRY_RUN)) {
+        return false;
+    }
+
+    if (slaveCommandUsesManualContinuousUv(command)) {
+        return true;
+    }
+
+    return currentSlaveAppMode() == SLAVE_APP_MODE_AUTO_DRAW &&
+           command.mode == MODE_DUALXY_DRAW_UV;
 }

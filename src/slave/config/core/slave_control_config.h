@@ -21,9 +21,18 @@ static constexpr uint32_t SLAVE_CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERI
 static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 
 // planner 执行分频。
+// SLAVE_FAST_PLANNER_ENABLED=1 时每个 motor tick 运行一次；置 0 可回退到原 2 tick 分频。
+#ifndef SLAVE_FAST_PLANNER_ENABLED
+#define SLAVE_FAST_PLANNER_ENABLED 1
+#endif
+
 // 每 N 个 motor tick 运行一次。
 #ifndef SLAVE_PLANNER_EVERY_N_STEPS
+#if SLAVE_FAST_PLANNER_ENABLED
+#define SLAVE_PLANNER_EVERY_N_STEPS 1UL
+#else
 #define SLAVE_PLANNER_EVERY_N_STEPS 2UL
+#endif
 #endif
 
 // runtime 状态发布分频。

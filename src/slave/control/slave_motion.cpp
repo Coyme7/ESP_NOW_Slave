@@ -3,9 +3,11 @@
 #include <Arduino.h>
 #include <math.h>
 
+#include "common/math/clamp.h"
 #include "common/protocol/protocol_types.h"
 #include "common/protocol/protocol_units.h"
 #include "common/system_state.h"
+#include "common/timing/link_timing.h"
 #include "slave/comm/slave_transport.h"
 #include "slave/config/slave_config.h"
 #include "slave/control/slave_auto_draw_runtime.h"
@@ -29,6 +31,14 @@ struct SlaveAxisPlannerResult {
     float target_angle_rad;
     bool limit;
     bool clamped;
+};
+
+struct SlaveAxisCommandTargetState {
+    bool initialized;
+    uint32_t last_seq;
+    uint32_t last_rx_us;
+    float last_command_mm;
+    float filtered_velocity_mm_s;
 };
 
 SlaveLocalControlRuntime runtime = {};
@@ -63,6 +73,62 @@ bool isAxisAtLimit(AxisId axis, float mm, bool clamped) {
     return clamped || fabsf(mm) >= (half_range_mm - 0.001f);
 }
 
+float axisSmoothRuntimeMm(AxisId axis) {
+    return (axis == AXIS_X) ? runtime.smooth_x_mm : runtime.smooth_y_mm;
+}
+
+float clampPredictVelocity(float velocity_mm_s) {
+    const float speed_limit_mm_s = fmaxf(kSlaveCommandPredictSpeedLimitMmS, 0.0f);
+    return clampFloat(velocity_mm_s, -speed_limit_mm_s, speed_limit_mm_s);
+}
+
+float updateAxisCommandTarget(AxisId axis,
+                              const SlaveRtCommand &command,
+                              uint32_t now_us,
+                              SlaveAxisCommandTargetState &state,
+                              bool &target_clamped) {
+    bool command_clamped = false;
+    const int16_t command_norm = selectAxisCommandNorm(axis, command);
+    const float command_target_mm =
+        slaveClampAxisPaperMm(axis, slaveAxisNormToPaperMm(axis, command_norm), &command_clamped);
+
+    if (!state.initialized) {
+        state.initialized = true;
+        state.last_seq = command.seq;
+        state.last_rx_us = command.last_rx_us;
+        state.last_command_mm = command_target_mm;
+        state.filtered_velocity_mm_s = 0.0f;
+    } else if (state.last_seq != command.seq) {
+        const uint32_t command_dt_us =
+            static_cast<uint32_t>(command.last_rx_us - state.last_rx_us);
+        float measured_velocity_mm_s = 0.0f;
+        if (command_dt_us > 0U && command_dt_us <= COMMAND_TIMEOUT_US) {
+            const float command_dt_s = static_cast<float>(command_dt_us) * 0.000001f;
+            measured_velocity_mm_s =
+                clampPredictVelocity((command_target_mm - state.last_command_mm) / command_dt_s);
+        }
+
+        const float alpha = clampFloat(kSlaveCommandVelocityLpfAlpha, 0.0f, 1.0f);
+        state.filtered_velocity_mm_s +=
+            (measured_velocity_mm_s - state.filtered_velocity_mm_s) * alpha;
+        state.last_seq = command.seq;
+        state.last_rx_us = command.last_rx_us;
+        state.last_command_mm = command_target_mm;
+    }
+
+    const float age_s =
+        clampFloat(static_cast<float>(now_us - command.last_rx_us) * 0.000001f,
+                   0.0f,
+                   fmaxf(kSlaveCommandPredictMaxLeadS, 0.0f));
+    bool predicted_clamped = false;
+    const float predicted_mm =
+        slaveClampAxisPaperMm(axis,
+                              command_target_mm + state.filtered_velocity_mm_s * age_s,
+                              &predicted_clamped);
+    target_clamped = command_clamped || predicted_clamped;
+    return predicted_mm;
+}
+
 float simulatedAxisAngle(float actual_angle_rad,
                          float target_angle_rad,
                          const SlaveAxisConfig &config) {
@@ -83,18 +149,19 @@ SlaveRtCommand readPlannerCommandForStep(uint32_t now_us, uint16_t &faults) {
 
 SlaveAxisPlannerResult planAxisTarget(AxisId axis,
                                       bool axis_enabled,
-                                      int16_t command_norm,
+                                      const SlaveRtCommand &command,
+                                      uint32_t now_us,
                                       float dt_s,
                                       bool pen_req,
-                                      SlaveTrajectorySmootherState &smoother) {
+                                      SlaveTrajectorySmootherState &smoother,
+                                      SlaveAxisCommandTargetState &command_target) {
     SlaveAxisPlannerResult result = {};
     if (!axis_enabled) {
         // 未启用轴不能进入平滑、坐标映射或硬件访问链路。
         return result;
     }
 
-    result.target_mm =
-        slaveClampAxisPaperMm(axis, slaveAxisNormToPaperMm(axis, command_norm), &result.clamped);
+    result.target_mm = updateAxisCommandTarget(axis, command, now_us, command_target, result.clamped);
     result.limit = isAxisAtLimit(axis, result.target_mm, result.clamped);
 
     const SlaveTrajectorySmootherOutput smooth =
@@ -104,7 +171,6 @@ SlaveAxisPlannerResult planAxisTarget(AxisId axis,
     return result;
 }
 
-#if SLAVE_AUTO_DRAW_ENABLED
 SlaveAxisPlannerResult planAxisPaperTarget(AxisId axis,
                                            bool axis_enabled,
                                            float target_mm,
@@ -125,7 +191,13 @@ SlaveAxisPlannerResult planAxisPaperTarget(AxisId axis,
     result.target_angle_rad = slaveLimitedAxisPaperMmToGimbalAngleRad(axis, result.smooth_mm);
     return result;
 }
-#endif
+
+SlaveAxisPlannerResult planAxisHoldTarget(AxisId axis,
+                                          bool axis_enabled,
+                                          float dt_s,
+                                          SlaveTrajectorySmootherState &smoother) {
+    return planAxisPaperTarget(axis, axis_enabled, axisSmoothRuntimeMm(axis), dt_s, false, smoother);
+}
 
 void updateRuntimeFromPlanner(const SlaveAxisPlannerResult &x_plan,
                               const SlaveAxisPlannerResult &y_plan,
@@ -211,6 +283,8 @@ void runSlaveControlPerfIsolationStep(float dt_s) {
 void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
     static SlaveTrajectorySmootherState x_smoother = {};
     static SlaveTrajectorySmootherState y_smoother = {};
+    static SlaveAxisCommandTargetState x_command_target = {};
+    static SlaveAxisCommandTargetState y_command_target = {};
 
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     const uint32_t command_start_us = SLAVE_TIMING_NOW_US();
@@ -224,8 +298,8 @@ void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
 
     constexpr bool x_axis_enabled = slaveRunModeRunsAxis(AXIS_X);
     constexpr bool y_axis_enabled = slaveRunModeRunsAxis(AXIS_Y);
-    const int16_t x_norm = x_axis_enabled ? selectAxisCommandNorm(AXIS_X, command) : 0;
-    const int16_t y_norm = y_axis_enabled ? selectAxisCommandNorm(AXIS_Y, command) : 0;
+    const bool command_allows_remote_target =
+        command.valid != 0 && slaveProtocolModeAllowsRemoteTarget(command.mode);
 
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     const uint32_t trajectory_start_us = SLAVE_TIMING_NOW_US();
@@ -263,8 +337,27 @@ void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
     } else
 #endif
     {
-        x_plan = planAxisTarget(AXIS_X, x_axis_enabled, x_norm, dt_s, pen_req, x_smoother);
-        y_plan = planAxisTarget(AXIS_Y, y_axis_enabled, y_norm, dt_s, pen_req, y_smoother);
+        if (command_allows_remote_target) {
+            x_plan = planAxisTarget(AXIS_X,
+                                    x_axis_enabled,
+                                    command,
+                                    now_us,
+                                    dt_s,
+                                    pen_req,
+                                    x_smoother,
+                                    x_command_target);
+            y_plan = planAxisTarget(AXIS_Y,
+                                    y_axis_enabled,
+                                    command,
+                                    now_us,
+                                    dt_s,
+                                    pen_req,
+                                    y_smoother,
+                                    y_command_target);
+        } else {
+            x_plan = planAxisHoldTarget(AXIS_X, x_axis_enabled, dt_s, x_smoother);
+            y_plan = planAxisHoldTarget(AXIS_Y, y_axis_enabled, dt_s, y_smoother);
+        }
     }
     if (x_plan.limit || y_plan.limit) {
         faults |= FAULT_BOUNDARY_HIT;
