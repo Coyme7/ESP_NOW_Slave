@@ -22,6 +22,8 @@ struct SlaveControlHealthSnapshot {
     uint32_t trajectory_max_us;
     uint32_t motor_us;
     uint32_t motor_max_us;
+    uint32_t current_sense_us;
+    uint32_t current_sense_max_us;
     uint32_t x_sensor_us;
     uint32_t x_sensor_max_us;
     uint32_t x_foc_us;

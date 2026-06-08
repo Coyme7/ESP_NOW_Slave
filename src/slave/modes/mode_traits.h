@@ -10,10 +10,10 @@
 constexpr bool slaveRunModeHasLogicalAxis(AxisId axis) {
     return axis == AXIS_X
                ? (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID)
                : (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_YSENSOR_ONLY_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_Y_OPEN_LOOP_ID ||
@@ -23,9 +23,9 @@ constexpr bool slaveRunModeHasLogicalAxis(AxisId axis) {
 constexpr bool slaveRunModeNeedsSensorHardware(AxisId axis) {
     return axis == AXIS_X
                ? (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID)
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID)
                : (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_YSENSOR_ONLY_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_Y_CLOSED_LOOP_ID);
 }
@@ -33,9 +33,9 @@ constexpr bool slaveRunModeNeedsSensorHardware(AxisId axis) {
 constexpr bool slaveRunModeNeedsMotorHardware(AxisId axis) {
     return axis == AXIS_X
                ? (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID)
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID)
                : (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_Y_OPEN_LOOP_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_Y_CLOSED_LOOP_ID);
 }
@@ -45,12 +45,12 @@ constexpr bool slaveRunModeUsesOpenLoopMotor(AxisId axis) {
 }
 
 constexpr bool slaveRunModeIsDualXYLogic() {
-    return SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+    return SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
            SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID;
 }
 
 constexpr bool slaveRunModeAllowsUvHardware() {
-    return SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID;
+    return SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID;
 }
 
 constexpr bool slaveRunModeRunsAxis(AxisId axis) {
@@ -65,5 +65,5 @@ constexpr uint32_t slaveRunModeNominalPeriodUs() {
     return (SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
             SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID)
                ? 200UL
-               : 500UL;
+               : (SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ? 250UL : 500UL);
 }

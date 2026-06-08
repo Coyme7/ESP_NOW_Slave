@@ -11,6 +11,7 @@
 #include "slave/modes/mode_guard.h"
 #include "slave/modes/mode_table.h"
 #include "slave/safety/pen_state_machine.h"
+#include "slave/vofa_tuner/vofa_tuner.h"
 
 // 从机安全模块。
 // 它独立于运动控制运行在 Core 0，核心原则是：任何不确定状态都关 UV。
@@ -37,6 +38,12 @@ uint16_t evaluateSlaveUvBlockReasons(uint32_t now_us) {
     const SlaveMotionSnapshot motion = snapshotSlaveMotion();
     const ModeCapability capability = slaveModeCapability();
     uint16_t reasons = UV_BLOCK_NONE;
+
+#if SLAVE_VOFA_TUNER_ENABLED
+    if (isSlaveVofaTunerRequestedOrActive()) {
+        reasons |= UV_BLOCK_MODE;
+    }
+#endif
 
     if (!isSlaveRtCommandFresh(command, now_us)) {
         // 没有新鲜命令时必须关灯。
@@ -112,7 +119,12 @@ void runSlaveSafetyStep(uint32_t now_us) {
     const SlaveRtCommand command = snapshotSlaveRtCommand();
     const SlaveMotionSnapshot motion = snapshotSlaveMotion();
     const bool command_fresh = isSlaveRtCommandFresh(command, now_us);
-    const bool effective_pen_req = command_fresh && motion.pen_req != 0;
+#if SLAVE_VOFA_TUNER_ENABLED
+    const bool tuner_active = isSlaveVofaTunerRequestedOrActive();
+#else
+    const bool tuner_active = false;
+#endif
+    const bool effective_pen_req = !tuner_active && command_fresh && motion.pen_req != 0;
     const uint8_t next_pen_state =
         updatePenStateMachine(pen_state,
                                {effective_pen_req,

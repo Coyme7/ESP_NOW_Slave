@@ -11,6 +11,7 @@
 #include "slave/safety/slave_safety.h"
 #include "slave/status/slave_status.h"
 #include "slave/comm/slave_transport.h"
+#include "slave/vofa_tuner/vofa_tuner.h"
 
 // 从机任务编排模块。
 // 这里把实时控制、UV 安全、ESP-NOW 遥测和串口状态分成独立任务，
@@ -32,6 +33,8 @@ volatile uint32_t controlTrajectoryLastUs = 0;
 volatile uint32_t controlTrajectoryMaxUs = 0;
 volatile uint32_t controlMotorLastUs = 0;
 volatile uint32_t controlMotorMaxUs = 0;
+volatile uint32_t controlCurrentSenseLastUs = 0;
+volatile uint32_t controlCurrentSenseMaxUs = 0;
 volatile uint32_t controlXSensorLastUs = 0;
 volatile uint32_t controlXSensorMaxUs = 0;
 volatile uint32_t controlXFocLastUs = 0;
@@ -100,7 +103,7 @@ bool startControlTimer() {
     timer_args.arg = nullptr;
 #ifdef CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD
     timer_args.dispatch_method = ESP_TIMER_ISR;
-    const char *dispatch_name = "isr";
+    __attribute__((unused)) const char *dispatch_name = "isr";
 #else
     timer_args.dispatch_method = ESP_TIMER_TASK;
     const char *dispatch_name = "task";
@@ -110,13 +113,21 @@ bool startControlTimer() {
 
     esp_err_t err = esp_timer_create(&timer_args, &controlTimerHandle);
     if (err != ESP_OK) {
+#if SLAVE_VOFA_TUNER_ENABLED
+        Serial.printf("# [Slave] control_timer create failed: %s\n", esp_err_to_name(err));
+#else
         Serial.printf("[Slave] control_timer create failed: %s\n", esp_err_to_name(err));
+#endif
         return false;
     }
 
     err = esp_timer_start_periodic(controlTimerHandle, SLAVE_CONTROL_TIMER_PERIOD_US);
     if (err != ESP_OK) {
+#if SLAVE_VOFA_TUNER_ENABLED
+        Serial.printf("# [Slave] control_timer start failed: %s\n", esp_err_to_name(err));
+#else
         Serial.printf("[Slave] control_timer start failed: %s\n", esp_err_to_name(err));
+#endif
         esp_timer_delete(controlTimerHandle);
         controlTimerHandle = nullptr;
         return false;
@@ -276,6 +287,7 @@ void task_comm_loop(void *pvParameters) {
 }
 #endif
 
+#if SLAVE_STATUS_LOG_ENABLED && !SLAVE_VOFA_TUNER_ENABLED
 void task_status_loop(void *pvParameters) {
     (void)pvParameters;
 
@@ -286,8 +298,29 @@ void task_status_loop(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(SLAVE_STATUS_LOOP_PERIOD_MS));
     }
 }
+#endif
+
+#if SLAVE_VOFA_TUNER_ENABLED
+void task_vofa_tuner_loop(void *pvParameters) {
+    (void)pvParameters;
+
+    while (true) {
+        runSlaveVofaTunerIoStep();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+#endif
 
 }  // namespace
+
+extern "C" void recordSlaveTimingCurrentSenseUs(uint32_t duration_us) {
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
+    controlCurrentSenseLastUs = duration_us;
+    updateMaxUs(controlCurrentSenseMaxUs, duration_us);
+#else
+    (void)duration_us;
+#endif
+}
 
 void startSlaveTasks() {
     // Core 0 先启动通信、安全和状态任务，Core 1 最后启动控制任务。
@@ -308,12 +341,21 @@ void startSlaveTasks() {
                             SLAVE_SAFETY_TASK_PRIORITY,
                             NULL,
                             SLAVE_IO_CORE);
-#if SLAVE_STATUS_LOG_ENABLED
+#if SLAVE_STATUS_LOG_ENABLED && !SLAVE_VOFA_TUNER_ENABLED
     xTaskCreatePinnedToCore(task_status_loop,
                             "SlaveStatus",
                             SLAVE_STATUS_TASK_STACK_BYTES,
                             NULL,
                             SLAVE_STATUS_TASK_PRIORITY,
+                            NULL,
+                            SLAVE_IO_CORE);
+#endif
+#if SLAVE_VOFA_TUNER_ENABLED
+    xTaskCreatePinnedToCore(task_vofa_tuner_loop,
+                            "SlaveVofaTuner",
+                            SLAVE_VOFA_TUNER_TASK_STACK_BYTES,
+                            NULL,
+                            SLAVE_VOFA_TUNER_TASK_PRIORITY,
                             NULL,
                             SLAVE_IO_CORE);
 #endif
@@ -380,6 +422,8 @@ SlaveControlHealthSnapshot getSlaveControlHealthSnapshot() {
     snapshot.trajectory_max_us = controlTrajectoryMaxUs;
     snapshot.motor_us = controlMotorLastUs;
     snapshot.motor_max_us = controlMotorMaxUs;
+    snapshot.current_sense_us = controlCurrentSenseLastUs;
+    snapshot.current_sense_max_us = controlCurrentSenseMaxUs;
     snapshot.x_sensor_us = controlXSensorLastUs;
     snapshot.x_sensor_max_us = controlXSensorMaxUs;
     snapshot.x_foc_us = controlXFocLastUs;
@@ -425,6 +469,7 @@ SlaveControlHealthSnapshot getSlaveControlHealthSnapshot() {
     controlCommandMaxUs = 0;
     controlTrajectoryMaxUs = 0;
     controlMotorMaxUs = 0;
+    controlCurrentSenseMaxUs = 0;
     controlXSensorMaxUs = 0;
     controlXFocMaxUs = 0;
     controlXMoveMaxUs = 0;

@@ -73,7 +73,7 @@ void trimDiagLine(char *line) {
 }
 
 void printSlaveDiagHelp() {
-    Serial.println("[SlaveDiag] commands: help, mode, axis, paper, link, stats, fault clear, pen up, pen down_req, uv status, draw test, dryrun on, dryrun off");
+    Serial.println("[SlaveDiag] commands: help, mode, axis, paper, link, stats, current, fault clear, pen up, pen down_req, uv status, draw test, dryrun on, dryrun off");
 }
 
 void printSlaveModeDiag() {
@@ -184,6 +184,44 @@ void printSlaveStatsDiag() {
                   static_cast<unsigned long>(health.y_foc_max_us));
 }
 
+void printSlaveCurrentDiag() {
+    const SlaveMotorCurrentSnapshot current = snapshotSlaveMotorCurrent();
+    Serial.println("[SlaveDiag] current");
+    Serial.printf("  config: enabled=%u zero_test=%u diag_test=%u limit=%.3f/%.3fA pid_q=%.2f/%.2f pid_d=%.2f/%.2f lpf=%.4fs\n",
+                  SLAVE_ENABLE_CURRENT_SENSE ? 1 : 0,
+                  SLAVE_ENABLE_ZERO_CURRENT_TEST ? 1 : 0,
+                  SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST ? 1 : 0,
+                  kSlaveXMotorFoc.limit.current_a,
+                  kSlaveYMotorFoc.limit.current_a,
+                  kSlaveXMotorFoc.current_loop.q.p,
+                  kSlaveYMotorFoc.current_loop.q.p,
+                  kSlaveXMotorFoc.current_loop.d.p,
+                  kSlaveYMotorFoc.current_loop.d.p,
+                  kSlaveXMotorFoc.current_loop.lpf_tf);
+    Serial.printf("  x: motor=%u sense=%u raw=%d,%d offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
+                  current.x.motor_ready ? 1 : 0,
+                  current.x.current_sense_ready ? 1 : 0,
+                  current.x.raw_adc_a,
+                  current.x.raw_adc_b,
+                  current.x.offset_ia_v,
+                  current.x.offset_ib_v,
+                  current.x.current_q_a,
+                  current.x.current_d_a,
+                  current.x.voltage_q_v,
+                  current.x.voltage_d_v);
+    Serial.printf("  y: motor=%u sense=%u raw=%d,%d offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
+                  current.y.motor_ready ? 1 : 0,
+                  current.y.current_sense_ready ? 1 : 0,
+                  current.y.raw_adc_a,
+                  current.y.raw_adc_b,
+                  current.y.offset_ia_v,
+                  current.y.offset_ib_v,
+                  current.y.current_q_a,
+                  current.y.current_d_a,
+                  current.y.voltage_q_v,
+                  current.y.voltage_d_v);
+}
+
 void printSlaveUvDiag() {
     const uint32_t now_us = micros();
     const uint16_t reasons = evaluateSlaveUvBlockReasons(now_us);
@@ -216,6 +254,8 @@ void handleSlaveDiagCommand(char *line) {
         printSlaveLinkDiag();
     } else if (strcmp(line, "stats") == 0) {
         printSlaveStatsDiag();
+    } else if (strcmp(line, "current") == 0) {
+        printSlaveCurrentDiag();
     } else if (strcmp(line, "fault clear") == 0) {
         clearLocalFaults();
         Serial.printf("[SlaveDiag] fault cleared active=0x%04x latched=0x%04x merged=0x%04x\n",
@@ -296,60 +336,139 @@ void printSlaveStatusLine() {
 
 #if SLAVE_STATUS_SUMMARY_LOG_ENABLED
     const SlaveRuntimeModeSnapshot runtime = getSlaveRuntimeModeSnapshot();
-    Serial.printf("[Slave] startup=%s app=%s requested=%s rejected=%u perf=%s link=%u rx=%lu rxok=%lu rxrej=%lu stale=%lu duplicate=%lu fresh=%u proto=%u flags=0x%04x active_faults=0x%04x latched_faults=0x%04x faults=0x%04x pen_state=%u pen_eff=%u draw=%s:%u%% traj=%s task=%u rx=%u/%u cursor=%u tflags=0x%02x uv_hw=%u uv_out=%u uv_block=%u uv_reason=0x%04x age=%lums\n",
+    Serial.println("[Slave]");
+    Serial.println("  mode:");
+    Serial.printf("    run=%s app=%s requested=%s rejected=%u perf=%s\n",
                   slaveRunModeName(),
                   slaveAppModeName(static_cast<SlaveAppMode>(runtime.active_mode)),
                   slaveAppModeName(static_cast<SlaveAppMode>(runtime.requested_mode)),
                   static_cast<unsigned int>(runtime.request_rejected),
-                  slaveControlPerfModeName(),
+                  slaveControlPerfModeName());
+    Serial.printf("    control=%luus planner_div=%lu x_foc=%lu x_move=%lu y_foc=%lu y_move=%lu\n\n",
+                  static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),
+                  static_cast<unsigned long>(SLAVE_PLANNER_EVERY_N_STEPS),
+                  static_cast<unsigned long>(SLAVE_X_FOC_EVERY_N_STEPS),
+                  static_cast<unsigned long>(SLAVE_X_MOVE_EVERY_N_STEPS),
+                  static_cast<unsigned long>(SLAVE_Y_FOC_EVERY_N_STEPS),
+                  static_cast<unsigned long>(SLAVE_Y_MOVE_EVERY_N_STEPS));
+
+    Serial.println("  link:");
+    Serial.printf("    state=%u fresh=%u proto=%u flags=0x%04x age=%lums seq=%lu\n",
                   static_cast<unsigned int>(sysData.link.link_state),
-                  static_cast<unsigned long>(sysData.link.last_command_seq),
-                  static_cast<unsigned long>(sysData.link.espnow_recv_ok_count),
-                  static_cast<unsigned long>(sysData.link.espnow_recv_reject_count),
-                  static_cast<unsigned long>(sysData.link.espnow_recv_stale_count),
-                  static_cast<unsigned long>(sysData.link.espnow_recv_duplicate_count),
                   command_fresh ? 1 : 0,
                   static_cast<unsigned int>(command.mode),
                   static_cast<unsigned int>(command.command_flags),
-                  static_cast<unsigned int>(active_faults),
-                  static_cast<unsigned int>(latched_faults),
-                  static_cast<unsigned int>(sysData.link.protocol_fault_flags),
+                  static_cast<unsigned long>(command_age_ms),
+                  static_cast<unsigned long>(sysData.link.last_command_seq));
+    Serial.printf("    ok=%lu reject=%lu stale=%lu duplicate=%lu\n\n",
+                  static_cast<unsigned long>(sysData.link.espnow_recv_ok_count),
+                  static_cast<unsigned long>(sysData.link.espnow_recv_reject_count),
+                  static_cast<unsigned long>(sysData.link.espnow_recv_stale_count),
+                  static_cast<unsigned long>(sysData.link.espnow_recv_duplicate_count));
+
+    Serial.println("  axis:");
+    Serial.printf("    x: cmd=%d target=%.2fmm smooth=%.2fmm actual=%.4frad err=%.2fmm limit=%u clamp=%u\n",
+                  command.x_norm,
+                  motion.target_x_mm,
+                  motion.smooth_x_mm,
+                  motion.actual_angle_rad,
+                  x_total_err_mm,
+                  motion.x_limit ? 1 : 0,
+                  motion.x_clamped ? 1 : 0);
+    Serial.printf("    y: cmd=%d target=%.2fmm smooth=%.2fmm actual=%.4frad err=%.2fmm limit=%u clamp=%u\n\n",
+                  command.y_norm,
+                  motion.target_y_mm,
+                  motion.smooth_y_mm,
+                  motion.actual_y_angle_rad,
+                  y_total_err_mm,
+                  motion.y_limit ? 1 : 0,
+                  motion.y_clamped ? 1 : 0);
+
+    Serial.println("  draw:");
+    Serial.printf("    pen_state=%u pen_eff=%u state=%s progress=%u%% traj=%s task=%u\n",
                   static_cast<unsigned int>(sysData.slave.pen_state),
                   static_cast<unsigned int>(motion.pen_req),
                   drawStateName(motion.draw_state),
                   static_cast<unsigned int>(motion.draw_progress_pct),
                   trajectoryPhaseName(motion.trajectory_status_flags),
-                  static_cast<unsigned int>(motion.trajectory_task_id),
+                  static_cast<unsigned int>(motion.trajectory_task_id));
+    Serial.printf("    rx=%u/%u cursor=%u flags=0x%02x\n\n",
                   static_cast<unsigned int>(motion.trajectory_received_count),
                   static_cast<unsigned int>(motion.trajectory_segment_count),
                   static_cast<unsigned int>(motion.trajectory_segment_cursor),
-                  static_cast<unsigned int>(motion.trajectory_status_flags),
+                  static_cast<unsigned int>(motion.trajectory_status_flags));
+
+    Serial.println("  uv:");
+    Serial.printf("    hw=%u out=%u blocked=%u reason=0x%04x\n\n",
                   SLAVE_UV_HW_ENABLED ? 1 : 0,
                   sysData.link.uv_out ? 1 : 0,
                   sysData.slave.uv_interlock_blocked ? 1 : 0,
-                  static_cast<unsigned int>(sysData.slave.uv_block_reasons),
-                  static_cast<unsigned long>(command_age_ms));
+                  static_cast<unsigned int>(sysData.slave.uv_block_reasons));
+
+    Serial.println("  fault:");
+    Serial.printf("    active=0x%04x latched=0x%04x protocol=0x%04x\n",
+                  static_cast<unsigned int>(active_faults),
+                  static_cast<unsigned int>(latched_faults),
+                  static_cast<unsigned int>(sysData.link.protocol_fault_flags));
+
+#if SLAVE_STATUS_CURRENT_LOG_ENABLED
+    const SlaveMotorCurrentSnapshot current = snapshotSlaveMotorCurrent();
+    Serial.println();
+    Serial.println("  current:");
+    Serial.printf("    common: enabled=%u zero_test=%u diag_test=%u shunt=%.4fohm gain=%.1f\n",
+                  SLAVE_ENABLE_CURRENT_SENSE ? 1 : 0,
+                  SLAVE_ENABLE_ZERO_CURRENT_TEST ? 1 : 0,
+                  SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST ? 1 : 0,
+                  kSlaveCurrentSenseHardware.shunt_ohm,
+                  kSlaveCurrentSenseHardware.gain);
+    Serial.printf("    x: motor=%u sense=%u raw=%d,%d offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
+                  current.x.motor_ready ? 1 : 0,
+                  current.x.current_sense_ready ? 1 : 0,
+                  current.x.raw_adc_a,
+                  current.x.raw_adc_b,
+                  current.x.offset_ia_v,
+                  current.x.offset_ib_v,
+                  current.x.current_q_a,
+                  current.x.current_d_a,
+                  current.x.voltage_q_v,
+                  current.x.voltage_d_v);
+    Serial.printf("    y: motor=%u sense=%u raw=%d,%d offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
+                  current.y.motor_ready ? 1 : 0,
+                  current.y.current_sense_ready ? 1 : 0,
+                  current.y.raw_adc_a,
+                  current.y.raw_adc_b,
+                  current.y.offset_ia_v,
+                  current.y.offset_ib_v,
+                  current.y.current_q_a,
+                  current.y.current_d_a,
+                  current.y.voltage_q_v,
+                  current.y.voltage_d_v);
+#endif
 #endif
 
 #if SLAVE_STATUS_XY_LOG_ENABLED
-    Serial.printf("[SlaveXY] xcmd=%d ycmd=%d x_cmd=%.2fmm y_cmd=%.2fmm x_smooth=%.2fmm y_smooth=%.2fmm x_target=%.4frad y_target=%.4frad x_actual=%.4frad y_actual=%.4frad x_track_err=%.1fmrad y_track_err=%.1fmrad x_total_err=%.2fmm y_total_err=%.2fmm x_limit=%u y_limit=%u x_clamped=%u y_clamped=%u y_raw=%u y_angle=%.4frad y_sample=%u\n",
+    Serial.println("[SlaveXY]");
+    Serial.printf("  command: x=%d y=%d fresh=%u\n",
                   command.x_norm,
                   command.y_norm,
+                  command_fresh ? 1 : 0);
+    Serial.printf("  x: cmd=%.2fmm smooth=%.2fmm target=%.4frad actual=%.4frad track=%.1fmrad total=%.2fmm limit=%u clamp=%u\n",
                   motion.target_x_mm,
-                  motion.target_y_mm,
                   motion.smooth_x_mm,
-                  motion.smooth_y_mm,
                   motion.target_angle_rad,
-                  motion.target_y_angle_rad,
                   motion.actual_angle_rad,
-                  motion.actual_y_angle_rad,
                   motion.x_track_err_mrad,
-                  motion.y_track_err_mrad,
                   x_total_err_mm,
-                  y_total_err_mm,
                   motion.x_limit ? 1 : 0,
+                  motion.x_clamped ? 1 : 0);
+    Serial.printf("  y: cmd=%.2fmm smooth=%.2fmm target=%.4frad actual=%.4frad track=%.1fmrad total=%.2fmm limit=%u clamp=%u raw=%u sample=%.4frad/%u\n",
+                  motion.target_y_mm,
+                  motion.smooth_y_mm,
+                  motion.target_y_angle_rad,
+                  motion.actual_y_angle_rad,
+                  motion.y_track_err_mrad,
+                  y_total_err_mm,
                   motion.y_limit ? 1 : 0,
-                  motion.x_clamped ? 1 : 0,
                   motion.y_clamped ? 1 : 0,
                   static_cast<unsigned int>(y_sensor_raw),
                   y_sensor_angle_rad,
@@ -357,10 +476,14 @@ void printSlaveStatusLine() {
 #endif
 
 #if SLAVE_STATUS_TIMING_LOG_ENABLED
-    Serial.printf("[SlaveTiming] diag_level=%u ctrl_dt=%lu ctrl_max=%lu step_us=%lu step_max=%lu over_period=%lu over_75pct=%lu over_50pct=%lu over_200=%lu over_300=%lu cmd_us=%lu/%lu traj_us=%lu/%lu motor_us=%lu/%lu x_sensor_us=%lu/%lu x_foc_us=%lu/%lu x_move_us=%lu/%lu y_sensor_us=%lu/%lu y_foc_us=%lu/%lu y_move_us=%lu/%lu state_us=%lu/%lu pub_us=%lu/%lu x_foc_run=%lu x_foc_skip=%lu x_foc_div=%lu y_foc_run=%lu y_foc_skip=%lu y_foc_div=%lu ctrl_miss_delta=%lu ctrl_miss=%lu\n",
+    Serial.println("[SlaveTiming]");
+    Serial.printf("  health: level=%u ctrl_dt=%luus ctrl_max=%luus miss=%lu/%lu\n",
                   static_cast<unsigned int>(SLAVE_TIMING_DIAG_LEVEL),
                   static_cast<unsigned long>(health.last_dt_us),
                   static_cast<unsigned long>(health.max_dt_us),
+                  static_cast<unsigned long>(health.missed_delta),
+                  static_cast<unsigned long>(health.missed_total));
+    Serial.printf("  step: last=%luus max=%luus over=%lu/%lu/%lu over_fixed=%lu/%lu period=%luus\n",
                   static_cast<unsigned long>(health.step_us),
                   static_cast<unsigned long>(health.step_max_us),
                   static_cast<unsigned long>(health.step_over_period_delta),
@@ -368,36 +491,40 @@ void printSlaveStatusLine() {
                   static_cast<unsigned long>(health.step_over_50pct_delta),
                   static_cast<unsigned long>(health.step_over_200_delta),
                   static_cast<unsigned long>(health.step_over_300_delta),
+                  static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US));
+    Serial.printf("  path: cmd=%lu/%luus traj=%lu/%luus motor=%lu/%luus current=%lu/%luus state=%lu/%luus pub=%lu/%luus\n",
                   static_cast<unsigned long>(health.command_us),
                   static_cast<unsigned long>(health.command_max_us),
                   static_cast<unsigned long>(health.trajectory_us),
                   static_cast<unsigned long>(health.trajectory_max_us),
                   static_cast<unsigned long>(health.motor_us),
                   static_cast<unsigned long>(health.motor_max_us),
+                  static_cast<unsigned long>(health.current_sense_us),
+                  static_cast<unsigned long>(health.current_sense_max_us),
+                  static_cast<unsigned long>(health.state_us),
+                  static_cast<unsigned long>(health.state_max_us),
+                  static_cast<unsigned long>(health.publish_us),
+                  static_cast<unsigned long>(health.publish_max_us));
+    Serial.printf("  x: sensor=%lu/%luus foc=%lu/%luus move=%lu/%luus run=%lu skip=%lu div=%lu\n",
                   static_cast<unsigned long>(health.x_sensor_us),
                   static_cast<unsigned long>(health.x_sensor_max_us),
                   static_cast<unsigned long>(health.x_foc_us),
                   static_cast<unsigned long>(health.x_foc_max_us),
                   static_cast<unsigned long>(health.x_move_us),
                   static_cast<unsigned long>(health.x_move_max_us),
+                  static_cast<unsigned long>(health.x_foc_run_delta),
+                  static_cast<unsigned long>(health.x_foc_skip_delta),
+                  static_cast<unsigned long>(health.x_foc_divisor));
+    Serial.printf("  y: sensor=%lu/%luus foc=%lu/%luus move=%lu/%luus run=%lu skip=%lu div=%lu\n",
                   static_cast<unsigned long>(health.y_sensor_us),
                   static_cast<unsigned long>(health.y_sensor_max_us),
                   static_cast<unsigned long>(health.y_foc_us),
                   static_cast<unsigned long>(health.y_foc_max_us),
                   static_cast<unsigned long>(health.y_move_us),
                   static_cast<unsigned long>(health.y_move_max_us),
-                  static_cast<unsigned long>(health.state_us),
-                  static_cast<unsigned long>(health.state_max_us),
-                  static_cast<unsigned long>(health.publish_us),
-                  static_cast<unsigned long>(health.publish_max_us),
-                  static_cast<unsigned long>(health.x_foc_run_delta),
-                  static_cast<unsigned long>(health.x_foc_skip_delta),
-                  static_cast<unsigned long>(health.x_foc_divisor),
                   static_cast<unsigned long>(health.y_foc_run_delta),
                   static_cast<unsigned long>(health.y_foc_skip_delta),
-                  static_cast<unsigned long>(health.y_foc_divisor),
-                  static_cast<unsigned long>(health.missed_delta),
-                  static_cast<unsigned long>(health.missed_total));
+                  static_cast<unsigned long>(health.y_foc_divisor));
 #endif
 #endif
 }

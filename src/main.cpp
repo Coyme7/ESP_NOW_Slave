@@ -18,13 +18,13 @@ struct SlaveHardwareBootState {
     bool y_motor_ready;
 };
 
-const char *slaveRunPathName() {
+__attribute__((unused)) const char *slaveRunPathName() {
     switch (SLAVE_RUN_MODE) {
         case SLAVE_MODE_SINGLE_X_5KHZ_ID:
             return "x_closed_loop";
         case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
             return "y_closed_loop";
-        case SLAVE_MODE_DUAL_XY_2KHZ_ID:
+        case SLAVE_MODE_DUAL_XY_4KHZ_ID:
             return "dual_xy_closed_loop";
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             return "dual_xy_dry_run";
@@ -73,6 +73,9 @@ extern "C" void app_main() {
     // 上电先关闭 UV 和电机使能，再按 SLAVE_RUN_MODE 初始化所需硬件。
     configureSlaveSafeOutputs();
     const SlaveHardwareBootState hw = setupSlaveHardwareForRunMode();
+#if !SLAVE_BOOT_LOG_ENABLED
+    (void)hw;
+#endif
 
 #if SLAVE_ESPNOW_ENABLED
     setupSlaveEspNow();
@@ -86,66 +89,89 @@ extern "C" void app_main() {
 #endif
 
 #if SLAVE_BOOT_LOG_ENABLED
-    Serial.printf("[SlaveConfig] run_mode=%s run_path=%s default_app=%s perf=%s x_motor_hw=%u y_motor_hw=%u x_sensor_hw=%u y_sensor_hw=%u uv_hw=%u fast_sensor=%u timing_level=%u status_log=%u planner_div=%lu snapshot_pub_div=%lu runtime_pub_div=%lu x_foc_div=%lu x_move_div=%lu y_foc_div=%lu y_move_div=%lu espnow_channel=%u auto_draw_compiled=%u y_sim=%u paper=%.0fx%.0fmm distance=%.0fmm\n",
+    Serial.println("[SlaveBoot]");
+    Serial.println("  mode:");
+    Serial.printf("    run=%s path=%s default_app=%s perf=%s\n",
                   slaveRunModeName(),
                   slaveRunPathName(),
                   slaveAppModeName(slaveDefaultAppMode()),
-                  slaveControlPerfModeName(),
-                  SLAVE_X_MOTOR_HW_ENABLED ? 1 : 0,
-                  SLAVE_Y_MOTOR_HW_ENABLED ? 1 : 0,
-                  SLAVE_X_SENSOR_HW_ENABLED ? 1 : 0,
-                  SLAVE_Y_SENSOR_HW_ENABLED ? 1 : 0,
-                  SLAVE_UV_HW_ENABLED ? 1 : 0,
-                  SLAVE_FAST_SENSOR_READER_ENABLED ? 1 : 0,
-                  static_cast<unsigned int>(SLAVE_TIMING_DIAG_LEVEL),
-                  SLAVE_STATUS_LOG_ENABLED ? 1 : 0,
+                  slaveControlPerfModeName());
+    Serial.printf("    control=%luus planner_div=%lu snapshot_div=%lu runtime_div=%lu\n",
+                  static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),
                   static_cast<unsigned long>(SLAVE_PLANNER_EVERY_N_STEPS),
                   static_cast<unsigned long>(SLAVE_MOTION_SNAPSHOT_EVERY_N_STEPS),
-                  static_cast<unsigned long>(SLAVE_RUNTIME_PUBLISH_EVERY_N_STEPS),
+                  static_cast<unsigned long>(SLAVE_RUNTIME_PUBLISH_EVERY_N_STEPS));
+    Serial.printf("    x_foc=%lu x_move=%lu y_foc=%lu y_move=%lu\n\n",
                   static_cast<unsigned long>(SLAVE_X_FOC_EVERY_N_STEPS),
                   static_cast<unsigned long>(SLAVE_X_MOVE_EVERY_N_STEPS),
                   static_cast<unsigned long>(SLAVE_Y_FOC_EVERY_N_STEPS),
-                  static_cast<unsigned long>(SLAVE_Y_MOVE_EVERY_N_STEPS),
-                  static_cast<unsigned int>(SLAVE_ESPNOW_CHANNEL),
-                  SLAVE_AUTO_DRAW_ENABLED ? 1 : 0,
-                  SLAVE_Y_SIMULATION_ENABLED ? 1 : 0,
-                  kSlavePaperGeometry.width_mm,
-                  kSlavePaperGeometry.height_mm,
-                  kSlavePaperGeometry.distance_mm);
+                  static_cast<unsigned long>(SLAVE_Y_MOVE_EVERY_N_STEPS));
 
-    Serial.printf("[Slave] boot x_req=%u/%u y_req=%u/%u x_ready=%u/%u y_ready=%u/%u espnow=%u control=%luus comm=%lums x_half=%.1fmm y_half=%.1fmm x_limit=%.1f..%.1fmm y_limit=%.1f..%.1fmm x_vlim=%.2fV y_vlim=%.2fV x_vel=%.2frad/s y_vel=%.2frad/s x_angleP=%.2f y_angleP=%.2f\n",
-                  slaveRunModeNeedsSensorHardware(AXIS_X) ? 1 : 0,
-                  slaveRunModeNeedsMotorHardware(AXIS_X) ? 1 : 0,
-                  slaveRunModeNeedsSensorHardware(AXIS_Y) ? 1 : 0,
-                  slaveRunModeNeedsMotorHardware(AXIS_Y) ? 1 : 0,
+    Serial.println("  hardware:");
+    Serial.printf("    x: sensor=%u motor=%u ready=%u/%u\n",
+                  SLAVE_X_SENSOR_HW_ENABLED ? 1 : 0,
+                  SLAVE_X_MOTOR_HW_ENABLED ? 1 : 0,
                   hw.x_sensor_ready ? 1 : 0,
-                  hw.x_motor_ready ? 1 : 0,
+                  hw.x_motor_ready ? 1 : 0);
+    Serial.printf("    y: sensor=%u motor=%u ready=%u/%u sim=%u\n",
+                  SLAVE_Y_SENSOR_HW_ENABLED ? 1 : 0,
+                  SLAVE_Y_MOTOR_HW_ENABLED ? 1 : 0,
                   hw.y_sensor_ready ? 1 : 0,
                   hw.y_motor_ready ? 1 : 0,
+                  SLAVE_Y_SIMULATION_ENABLED ? 1 : 0);
+    Serial.printf("    uv=%u espnow=%u channel=%u fast_sensor=%u auto_draw=%u status_log=%u timing=%u\n\n",
+                  SLAVE_UV_HW_ENABLED ? 1 : 0,
                   SLAVE_ESPNOW_ENABLED ? 1 : 0,
-                  static_cast<unsigned long>(CONTROL_LOOP_PERIOD_US),
-                  static_cast<unsigned long>(SLAVE_TELEMETRY_PERIOD_MS),
+                  static_cast<unsigned int>(SLAVE_ESPNOW_CHANNEL),
+                  SLAVE_FAST_SENSOR_READER_ENABLED ? 1 : 0,
+                  SLAVE_AUTO_DRAW_ENABLED ? 1 : 0,
+                  SLAVE_STATUS_LOG_ENABLED ? 1 : 0,
+                  static_cast<unsigned int>(SLAVE_TIMING_DIAG_LEVEL));
+
+    Serial.println("  motion:");
+    Serial.printf("    paper=%.0fx%.0fmm distance=%.0fmm x_half=%.1fmm y_half=%.1fmm\n",
+                  kSlavePaperGeometry.width_mm,
+                  kSlavePaperGeometry.height_mm,
+                  kSlavePaperGeometry.distance_mm,
                   PLOT_X_HALF_RANGE_MM,
-                  PLOT_Y_HALF_RANGE_MM,
+                  PLOT_Y_HALF_RANGE_MM);
+    Serial.printf("    x_limit=%.1f..%.1fmm y_limit=%.1f..%.1fmm telemetry=%lums status=%lums\n\n",
                   kSlaveXAxisLimit.min_mm,
                   kSlaveXAxisLimit.max_mm,
                   kSlaveYAxisLimit.min_mm,
                   kSlaveYAxisLimit.max_mm,
-                  kSlaveXMotorFoc.voltage.motor_limit_v,
-                  kSlaveYMotorFoc.voltage.motor_limit_v,
-                  kSlaveXMotorFoc.limit.velocity_rad_s,
-                  kSlaveYMotorFoc.limit.velocity_rad_s,
-                  kSlaveXMotorFoc.position.p,
-                  kSlaveYMotorFoc.position.p);
-    Serial.printf("[Slave] y_half=%.1fmm y_throw=%.1fmm status_period=%lums\n",
-                  kSlaveYAxis.geometry.half_range_mm,
-                  kSlaveYAxis.geometry.throw_distance_mm,
+                  static_cast<unsigned long>(SLAVE_TELEMETRY_PERIOD_MS),
                   static_cast<unsigned long>(SLAVE_STATUS_LOOP_PERIOD_MS));
-    Serial.printf("[Slave] foc_every_n_steps x=%lu y=%lu move_every_n_steps x=%lu y=%lu\n",
-                  static_cast<unsigned long>(SLAVE_X_FOC_EVERY_N_STEPS),
-                  static_cast<unsigned long>(SLAVE_Y_FOC_EVERY_N_STEPS),
-                  static_cast<unsigned long>(SLAVE_X_MOVE_EVERY_N_STEPS),
-                  static_cast<unsigned long>(SLAVE_Y_MOVE_EVERY_N_STEPS));
+
+    Serial.println("  motor:");
+    Serial.printf("    x: vlim=%.2fV current=%.3fA vel=%.2frad/s anglePID=%.2f/%.2f/%.2f\n",
+                  kSlaveXMotorFoc.voltage.motor_limit_v,
+                  kSlaveXMotorFoc.limit.current_a,
+                  kSlaveXMotorFoc.limit.velocity_rad_s,
+                  kSlaveXMotorFoc.position.p,
+                  kSlaveXMotorFoc.position.i,
+                  kSlaveXMotorFoc.position.d);
+    Serial.printf("    y: vlim=%.2fV current=%.3fA vel=%.2frad/s anglePID=%.2f/%.2f/%.2f throw=%.1fmm\n",
+                  kSlaveYMotorFoc.voltage.motor_limit_v,
+                  kSlaveYMotorFoc.limit.current_a,
+                  kSlaveYMotorFoc.limit.velocity_rad_s,
+                  kSlaveYMotorFoc.position.p,
+                  kSlaveYMotorFoc.position.i,
+                  kSlaveYMotorFoc.position.d,
+                  kSlaveYAxis.geometry.throw_distance_mm);
+    Serial.printf("    current_sense=%u zero_test=%u diag_test=%u shunt=%.4fohm gain=%.1f lpf=%.4fs\n",
+                  SLAVE_ENABLE_CURRENT_SENSE ? 1 : 0,
+                  SLAVE_ENABLE_ZERO_CURRENT_TEST ? 1 : 0,
+                  SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST ? 1 : 0,
+                  kSlaveCurrentSenseHardware.shunt_ohm,
+                  kSlaveCurrentSenseHardware.gain,
+                  kSlaveXMotorFoc.current_loop.lpf_tf);
+    Serial.printf("    foc_startup_skip=%u x_dir=%d x_zero=%.6frad y_dir=%d y_zero=%.6frad\n",
+                  SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP ? 1 : 0,
+                  static_cast<int>(SLAVE_X_FOC_SENSOR_DIRECTION),
+                  static_cast<float>(SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD),
+                  static_cast<int>(SLAVE_Y_FOC_SENSOR_DIRECTION),
+                  static_cast<float>(SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD));
 #endif
 
     startSlaveTasks();

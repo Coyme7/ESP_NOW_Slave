@@ -24,7 +24,7 @@ ModeCapability slaveAutoDrawCapability(uint8_t run_mode) {
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             capability.flags = slaveRemoteTrajectoryFlags() | MODE_CAP_DRY_RUN;
             break;
-        case SLAVE_MODE_DUAL_XY_2KHZ_ID:
+        case SLAVE_MODE_DUAL_XY_4KHZ_ID:
             capability.flags = slaveRemoteTrajectoryFlags() |
                                (SLAVE_X_SENSOR_HW_ENABLED ? MODE_CAP_X_SENSOR : MODE_CAP_NONE) |
                                (SLAVE_Y_SENSOR_HW_ENABLED ? MODE_CAP_Y_SENSOR : MODE_CAP_NONE) |

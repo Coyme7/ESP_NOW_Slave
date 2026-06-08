@@ -33,6 +33,6 @@ bool acceptSlaveTrajectorySegment(const TrajectorySegmentPacket &packet, uint32_
 // 热路径说明：runSlaveControlStep() 不做串口、ESP-NOW 发送、UV GPIO 写或动态内存；
 // 只消费最新命令快照并发布实际角度、纸面百分比和故障位。
 
-// 从机控制单步：调度低频 planner 和 2kHz motor tick；5kHz 仅通过临时覆盖控制周期压测。
+// 从机控制单步：调度低频 planner 和当前 run mode 的 motor tick；真实 DualXY 基准为 4kHz。
 void runSlaveControlStep(float dt_s);
 void runSlaveControlPerfIsolationStep(float dt_s);

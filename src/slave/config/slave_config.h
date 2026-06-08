@@ -13,11 +13,13 @@
 
 #include "slave/config/core/slave_comm_config.h"
 #include "slave/config/core/slave_control_config.h"
+#include "slave/config/core/slave_current_sense_config.h"
 #include "slave/config/core/slave_motor_config.h"
 
 #include "slave/config/motion/slave_axis_config.h"
 #include "slave/config/motion/slave_paper_config.h"
 #include "slave/config/motion/slave_trajectory_config.h"
+#include "slave/vofa_tuner/vofa_tuner_config.h"
 
 // 非法组合校验集中入口。必须放在所有分类配置之后。
 #include "slave/config/slave_config_validate.h"

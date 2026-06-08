@@ -13,8 +13,8 @@ const char *slaveRunModeName() {
             return "SingleX_5kHz";
         case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
             return "SingleY_5kHz";
-        case SLAVE_MODE_DUAL_XY_2KHZ_ID:
-            return "DualXY_2kHz";
+        case SLAVE_MODE_DUAL_XY_4KHZ_ID:
+            return "DualXY_4kHz";
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             return "DualXY_DryRun";
         case SLAVE_MODE_YSENSOR_ONLY_ID:

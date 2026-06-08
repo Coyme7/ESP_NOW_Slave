@@ -22,11 +22,15 @@ static constexpr int MOTOR2_EN_Y = MOTOR_DRIVER_EN;
 static constexpr int MOTOR1_PWM_U_X = 7;
 static constexpr int MOTOR1_PWM_V_X = 15;
 static constexpr int MOTOR1_PWM_W_X = 16;
+static constexpr int MOTOR1_CURRENT_A_X = 4;
+static constexpr int MOTOR1_CURRENT_B_X = 5;
 
 // Y 轴三相 PWM 输出，保留给后续双轴绘图测试。
 static constexpr int MOTOR2_PWM_U_Y = 9;
 static constexpr int MOTOR2_PWM_V_Y = 10;
 static constexpr int MOTOR2_PWM_W_Y = 11;
+static constexpr int MOTOR2_CURRENT_A_Y = 1;
+static constexpr int MOTOR2_CURRENT_B_Y = 2;
 
 // X 轴 MT6701 编码器接线。
 static constexpr int ENCODER1_CS_X = 12;
@@ -49,8 +53,6 @@ static constexpr int USB_D_PLUS = 20;
 static constexpr int USB_D_MINUS = 19;
 
 // 弱驱动或调试相关未用脚；启用前先核对电气能力和 pinmap。
-static constexpr int UNUSED_WEAK_1 = 1;
-static constexpr int UNUSED_WEAK_2 = 2;
 static constexpr int UNUSED_WEAK_35 = 35;
 static constexpr int UNUSED_WEAK_39 = 39;
 static constexpr int UNUSED_WEAK_40 = 40;
@@ -60,8 +62,6 @@ static constexpr int UNUSED_WEAK_21 = 21;
 static constexpr int UNUSED_JTAG_42 = 42;
 
 // 当前保留不用的普通 GPIO。
-static constexpr int UNUSED_STRONG_4 = 4;
-static constexpr int UNUSED_STRONG_5 = 5;
 static constexpr int UNUSED_STRONG_18 = 18;
 static constexpr int UNUSED_STRONG_8 = 8;
 

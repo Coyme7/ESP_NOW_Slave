@@ -8,40 +8,87 @@
 
 namespace {
 
-const SlaveAxisConfig &axisConfig(AxisId axis) {
-    return (axis == AXIS_Y) ? kSlaveYAxis : kSlaveXAxis;
+struct SlaveAxisDerivedGeometry {
+    float half_range_mm;
+    float limit_min_mm;
+    float limit_max_mm;
+    float center_angle_rad;
+    float center_mm;
+    float direction_sign;
+    float distance_mm;
+    float inv_distance;
+};
+
+constexpr float constexprMin(float a, float b) {
+    return (a < b) ? a : b;
 }
 
-const SlaveAxisLimitConfig &axisLimitConfig(AxisId axis) {
-    return (axis == AXIS_Y) ? kSlaveYAxisLimit : kSlaveXAxisLimit;
+constexpr float constexprMax(float a, float b) {
+    return (a > b) ? a : b;
+}
+
+constexpr float configuredHalfRange(float configured_half_mm, float paper_half_mm) {
+    return (configured_half_mm > 0.0f)
+               ? constexprMin(configured_half_mm, paper_half_mm)
+               : paper_half_mm;
+}
+
+constexpr SlaveAxisDerivedGeometry makeAxisDerivedGeometry(const SlaveAxisConfig &axis,
+                                                           const SlaveAxisLimitConfig &limit,
+                                                           float paper_half_mm,
+                                                           float center_mm,
+                                                           float distance_mm) {
+    return {
+        configuredHalfRange(axis.geometry.half_range_mm, paper_half_mm),
+        constexprMax(-configuredHalfRange(axis.geometry.half_range_mm, paper_half_mm), limit.min_mm),
+        constexprMin(configuredHalfRange(axis.geometry.half_range_mm, paper_half_mm), limit.max_mm),
+        axis.geometry.center_angle_rad,
+        center_mm,
+        static_cast<float>(axis.geometry.direction_sign),
+        distance_mm,
+        1.0f / distance_mm,
+    };
+}
+
+static constexpr SlaveAxisDerivedGeometry kSlaveXAxisDerived =
+    makeAxisDerivedGeometry(kSlaveXAxis,
+                            kSlaveXAxisLimit,
+                            kSlavePaperGeometry.width_mm * 0.5f,
+                            kSlavePaperGeometry.center_x_mm,
+                            kSlavePaperGeometry.distance_mm);
+
+static constexpr SlaveAxisDerivedGeometry kSlaveYAxisDerived =
+    makeAxisDerivedGeometry(kSlaveYAxis,
+                            kSlaveYAxisLimit,
+                            kSlavePaperGeometry.height_mm * 0.5f,
+                            kSlavePaperGeometry.center_y_mm,
+                            kSlavePaperGeometry.distance_mm);
+
+const SlaveAxisDerivedGeometry &axisDerived(AxisId axis) {
+    return (axis == AXIS_Y) ? kSlaveYAxisDerived : kSlaveXAxisDerived;
 }
 
 }  // namespace
 
 PaperGeometry slaveCurrentPaperGeometry() {
     PaperGeometry geometry = kSlavePaperGeometry;
-    geometry.x_center_angle_rad = kSlaveXAxis.geometry.center_angle_rad;
-    geometry.y_center_angle_rad = kSlaveYAxis.geometry.center_angle_rad;
-    geometry.x_sign = kSlaveXAxis.geometry.direction_sign;
-    geometry.y_sign = kSlaveYAxis.geometry.direction_sign;
+    geometry.x_center_angle_rad = kSlaveXAxisDerived.center_angle_rad;
+    geometry.y_center_angle_rad = kSlaveYAxisDerived.center_angle_rad;
+    geometry.x_sign = kSlaveXAxisDerived.direction_sign;
+    geometry.y_sign = kSlaveYAxisDerived.direction_sign;
     return geometry;
 }
 
 float slaveAxisHalfRangeMm(AxisId axis) {
-    const float paper_half = (axis == AXIS_Y) ? (kSlavePaperGeometry.height_mm * 0.5f)
-                                             : (kSlavePaperGeometry.width_mm * 0.5f);
-    const float configured_half = axisConfig(axis).geometry.half_range_mm;
-    return (configured_half > 0.0f) ? fminf(configured_half, paper_half) : paper_half;
+    return axisDerived(axis).half_range_mm;
 }
 
 float slaveAxisLimitMinMm(AxisId axis) {
-    const float half_range_mm = slaveAxisHalfRangeMm(axis);
-    return fmaxf(-half_range_mm, axisLimitConfig(axis).min_mm);
+    return axisDerived(axis).limit_min_mm;
 }
 
 float slaveAxisLimitMaxMm(AxisId axis) {
-    const float half_range_mm = slaveAxisHalfRangeMm(axis);
-    return fminf(half_range_mm, axisLimitConfig(axis).max_mm);
+    return axisDerived(axis).limit_max_mm;
 }
 
 PaperPointMm slaveNormToPaperPointMm(int16_t x_norm, int16_t y_norm) {
@@ -55,13 +102,12 @@ GimbalAnglesRad slavePaperPointToGimbalAnglesRad(const PaperPointMm &point) {
 }
 
 float slaveAxisNormToPaperMm(AxisId axis, int16_t norm) {
-    return normToUnit(norm) * slaveAxisHalfRangeMm(axis);
+    return normToUnit(norm) * axisDerived(axis).half_range_mm;
 }
 
 float slaveClampAxisPaperMm(AxisId axis, float mm, bool *clamped) {
-    const float min_mm = slaveAxisLimitMinMm(axis);
-    const float max_mm = slaveAxisLimitMaxMm(axis);
-    const float limited = clampFloat(mm, min_mm, max_mm);
+    const SlaveAxisDerivedGeometry &geometry = axisDerived(axis);
+    const float limited = clampFloat(mm, geometry.limit_min_mm, geometry.limit_max_mm);
     if (clamped != nullptr) {
         *clamped = limited != mm;
     }
@@ -74,25 +120,17 @@ float slaveAxisPaperMmToGimbalAngleRad(AxisId axis, float mm) {
 }
 
 float slaveLimitedAxisPaperMmToGimbalAngleRad(AxisId axis, float limited_mm) {
-    const PaperGeometry geometry = slaveCurrentPaperGeometry();
-    if (axis == AXIS_Y) {
-        return geometry.y_center_angle_rad +
-               geometry.y_sign * atanf((limited_mm + geometry.center_y_mm) / geometry.distance_mm);
-    }
-    return geometry.x_center_angle_rad +
-           geometry.x_sign * atanf((limited_mm + geometry.center_x_mm) / geometry.distance_mm);
+    const SlaveAxisDerivedGeometry &geometry = axisDerived(axis);
+    return geometry.center_angle_rad +
+           geometry.direction_sign * atanf((limited_mm + geometry.center_mm) * geometry.inv_distance);
 }
 
 int16_t slaveAxisGimbalAngleRadToNorm(AxisId axis, float angle_rad) {
-    const PaperGeometry geometry = slaveCurrentPaperGeometry();
-    const bool is_y = axis == AXIS_Y;
-    const float center_angle_rad =
-        is_y ? geometry.y_center_angle_rad : geometry.x_center_angle_rad;
-    const float direction = is_y ? geometry.y_sign : geometry.x_sign;
-    const float center_mm = is_y ? geometry.center_y_mm : geometry.center_x_mm;
-    const float axis_angle_rad = (angle_rad - center_angle_rad) * direction;
-    const float mm = tanf(axis_angle_rad) * geometry.distance_mm - center_mm;
-    return unitToNorm(mm / slaveAxisHalfRangeMm(axis));
+    const SlaveAxisDerivedGeometry &geometry = axisDerived(axis);
+    const float axis_angle_rad =
+        (angle_rad - geometry.center_angle_rad) * geometry.direction_sign;
+    const float mm = tanf(axis_angle_rad) * geometry.distance_mm - geometry.center_mm;
+    return unitToNorm(mm / geometry.half_range_mm);
 }
 
 float slaveXNormToPaperMm(int16_t x_norm) {

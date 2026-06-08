@@ -16,7 +16,7 @@ static_assert(sizeof(SlaveTelemetryPacket) <= 250, "ESP-NOW v1 payload limit exc
 
 static_assert(SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_2KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_YSENSOR_ONLY_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_Y_OPEN_LOOP_ID ||
@@ -71,8 +71,8 @@ static_assert(!(slaveRunModeNeedsMotorHardware(AXIS_Y) &&
                 !SLAVE_Y_SENSOR_HW_ENABLED),
               "Y closed-loop motor output requires Y sensor hardware");
 
-static_assert(!(SLAVE_UV_HW_ENABLED && SLAVE_RUN_MODE != SLAVE_MODE_DUAL_XY_2KHZ_ID),
-              "SLAVE_UV_HW_ENABLED requires SLAVE_MODE_DUAL_XY_2KHZ");
+static_assert(!(SLAVE_UV_HW_ENABLED && SLAVE_RUN_MODE != SLAVE_MODE_DUAL_XY_4KHZ_ID),
+              "SLAVE_UV_HW_ENABLED requires SLAVE_MODE_DUAL_XY_4KHZ");
 static_assert(!(SLAVE_UV_HW_ENABLED && !SLAVE_DUAL_XY_HARDWARE_ENABLED),
               "SLAVE_UV_HW_ENABLED requires SLAVE_DUAL_XY_HARDWARE_ENABLED");
 static_assert(!(SLAVE_UV_HW_ENABLED && !SLAVE_ESPNOW_ENABLED),
@@ -85,7 +85,72 @@ static_assert(SLAVE_STATUS_LOOP_PERIOD_MS > 0,
               "SLAVE_STATUS_LOOP_PERIOD_MS must be greater than 0");
 static_assert(SLAVE_TIMING_DIAG_LEVEL >= 0 && SLAVE_TIMING_DIAG_LEVEL <= 2,
               "SLAVE_TIMING_DIAG_LEVEL must be 0, 1, or 2");
-
+static_assert(SLAVE_VOFA_TUNER_ENABLED == 0 || SLAVE_VOFA_TUNER_ENABLED == 1,
+              "SLAVE_VOFA_TUNER_ENABLED must be 0 or 1");
+static_assert(SLAVE_VOFA_TUNER_X_ENABLED == 0 || SLAVE_VOFA_TUNER_X_ENABLED == 1,
+              "SLAVE_VOFA_TUNER_X_ENABLED must be 0 or 1");
+static_assert(SLAVE_VOFA_TUNER_Y_ENABLED == 0 || SLAVE_VOFA_TUNER_Y_ENABLED == 1,
+              "SLAVE_VOFA_TUNER_Y_ENABLED must be 0 or 1");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED &&
+                !SLAVE_VOFA_TUNER_X_ENABLED &&
+                !SLAVE_VOFA_TUNER_Y_ENABLED),
+              "VOFA tuner requires at least one enabled axis");
+static_assert(!(SLAVE_VOFA_TUNER_X_ENABLED &&
+                (!SLAVE_X_MOTOR_HW_ENABLED || !SLAVE_X_SENSOR_HW_ENABLED)),
+              "VOFA X tuner requires X motor and sensor hardware");
+static_assert(!(SLAVE_VOFA_TUNER_Y_ENABLED &&
+                (!SLAVE_Y_MOTOR_HW_ENABLED || !SLAVE_Y_SENSOR_HW_ENABLED)),
+              "VOFA Y tuner requires Y motor and sensor hardware");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && !SLAVE_ENABLE_CURRENT_SENSE),
+              "VOFA CURRENT_Q tuner requires current sense");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && SLAVE_ENABLE_ZERO_CURRENT_TEST),
+              "VOFA tuner is incompatible with zero-current-test mode");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST),
+              "VOFA tuner is incompatible with current-sense diagnostic injection");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED &&
+                SLAVE_CONTROL_PERF_MODE != SLAVE_PERF_FULL_CONTROL),
+              "VOFA tuner requires full control mode");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && SLAVE_BOOT_LOG_ENABLED),
+              "VOFA tuner requires boot logs to be disabled");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && SLAVE_STATUS_LOG_ENABLED),
+              "VOFA tuner requires status logs to be disabled");
+static_assert(!(SLAVE_VOFA_TUNER_ENABLED && SLAVE_CONTROL_TIMER_LOG_ENABLED),
+              "VOFA tuner requires control timer logs to be disabled");
+static_assert(SLAVE_VOFA_SAMPLE_PERIOD_DEFAULT_MS >= SLAVE_VOFA_SAMPLE_PERIOD_MIN_MS &&
+                  SLAVE_VOFA_SAMPLE_PERIOD_DEFAULT_MS <= SLAVE_VOFA_SAMPLE_PERIOD_MAX_MS,
+              "VOFA sample period must stay in 20..50ms");
+static_assert(SLAVE_VOFA_WAVE_PERIOD_DEFAULT_MS >= SLAVE_VOFA_WAVE_PERIOD_MIN_MS &&
+                  SLAVE_VOFA_WAVE_PERIOD_DEFAULT_MS <= SLAVE_VOFA_WAVE_PERIOD_MAX_MS,
+              "VOFA wave period is out of range");
+static_assert(SLAVE_VOFA_CURRENT_LIMIT_DEFAULT_A >= SLAVE_VOFA_CURRENT_LIMIT_MIN_A &&
+                  SLAVE_VOFA_CURRENT_LIMIT_DEFAULT_A <= SLAVE_VOFA_CURRENT_LIMIT_MAX_A,
+              "VOFA current limit is out of range");
+static_assert(SLAVE_VOFA_VOLTAGE_LIMIT_DEFAULT_V >= SLAVE_VOFA_VOLTAGE_LIMIT_MIN_V &&
+                  SLAVE_VOFA_VOLTAGE_LIMIT_DEFAULT_V <= SLAVE_VOFA_VOLTAGE_LIMIT_MAX_V,
+              "VOFA voltage limit is out of range");
+static_assert(SLAVE_VOFA_VELOCITY_LIMIT_DEFAULT_RAD_S >= SLAVE_VOFA_VELOCITY_LIMIT_MIN_RAD_S &&
+                  SLAVE_VOFA_VELOCITY_LIMIT_DEFAULT_RAD_S <= SLAVE_VOFA_VELOCITY_LIMIT_MAX_RAD_S,
+              "VOFA velocity limit is out of range");
+static_assert(SLAVE_VOFA_ANGLE_LIMIT_DEFAULT_RAD >= SLAVE_VOFA_ANGLE_LIMIT_MIN_RAD &&
+                  SLAVE_VOFA_ANGLE_LIMIT_DEFAULT_RAD <= SLAVE_VOFA_ANGLE_LIMIT_MAX_RAD,
+              "VOFA angle limit is out of range");
+static_assert(!(SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST && !SLAVE_ENABLE_CURRENT_SENSE),
+              "SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST requires SLAVE_ENABLE_CURRENT_SENSE");
+static_assert(!(SLAVE_ENABLE_ZERO_CURRENT_TEST && !SLAVE_ENABLE_CURRENT_SENSE),
+              "SLAVE_ENABLE_ZERO_CURRENT_TEST requires SLAVE_ENABLE_CURRENT_SENSE");
+static_assert(SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP == 0 ||
+                  SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP == 1,
+              "SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP must be 0 or 1");
+static_assert(SLAVE_X_FOC_SENSOR_DIRECTION == -1 || SLAVE_X_FOC_SENSOR_DIRECTION == 1,
+              "SLAVE_X_FOC_SENSOR_DIRECTION must be -1 or 1");
+static_assert(SLAVE_Y_FOC_SENSOR_DIRECTION == -1 || SLAVE_Y_FOC_SENSOR_DIRECTION == 1,
+              "SLAVE_Y_FOC_SENSOR_DIRECTION must be -1 or 1");
+static_assert(SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD >= -1000.0f &&
+                  SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD <= 1000.0f,
+              "SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD is out of range");
+static_assert(SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD >= -1000.0f &&
+                  SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD <= 1000.0f,
+              "SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD is out of range");
 static_assert(PLOT_X_HALF_RANGE_MM > 0.0f && PLOT_Y_HALF_RANGE_MM > 0.0f,
               "plot half range must be greater than 0");
 static_assert(DEFAULT_THROW_DISTANCE_MM > 0.0f,
@@ -131,12 +196,46 @@ constexpr bool slaveConfigMotorFocValid(const SlaveMotorFocConfig &config) {
            config.voltage.align_v <= config.voltage.driver_limit_v &&
            config.limit.velocity_rad_s > 0.0f &&
            config.position.p >= 0.0f &&
+           config.position.i >= 0.0f &&
+           config.position.d >= 0.0f &&
            config.velocity.p >= 0.0f &&
            config.velocity.i >= 0.0f &&
            config.velocity.d >= 0.0f &&
            config.velocity.output_ramp >= 0.0f &&
            config.filter.velocity_tf >= 0.0f &&
-           config.filter.angle_tf >= 0.0f;
+           config.filter.angle_tf >= 0.0f &&
+           config.limit.current_a > 0.0f &&
+           config.current_loop.q.p >= 0.0f &&
+           config.current_loop.q.i >= 0.0f &&
+           config.current_loop.q.d >= 0.0f &&
+           config.current_loop.q.output_ramp >= 0.0f &&
+           config.current_loop.d.p >= 0.0f &&
+           config.current_loop.d.i >= 0.0f &&
+           config.current_loop.d.d >= 0.0f &&
+           config.current_loop.d.output_ramp >= 0.0f &&
+           config.current_loop.lpf_tf >= 0.0f;
+}
+
+constexpr bool slaveConfigCurrentSenseHardwareValid(const SlaveCurrentSenseHardwareConfig &config) {
+    return config.shunt_ohm > 0.0f &&
+           config.gain > 0.0f &&
+           config.adc_full_scale_v > 0.0f &&
+           config.adc_raw_max > 0.0f &&
+           config.adc_raw_to_voltage_v > 0.0f;
+}
+
+constexpr bool slaveConfigCurrentSenseAxisValid(const SlaveCurrentSenseAxisConfig &config) {
+    return slaveConfigDirectionSignValid(config.gain_sign_a) &&
+           slaveConfigDirectionSignValid(config.gain_sign_b);
+}
+
+constexpr bool slaveConfigCurrentSenseDiagValid(const SlaveCurrentSenseDiagConfig &config) {
+    return config.voltage_v > 0.0f &&
+           config.early_ms > 0U &&
+           config.settle_ms > 0U &&
+           config.adc_prime_reads > 0U &&
+           config.offset_reads > 0U &&
+           config.offset_settle_ms > 0U;
 }
 
 constexpr bool slaveConfigAxisValid(const SlaveAxisConfig &config) {
@@ -182,6 +281,14 @@ static_assert(slaveConfigMotorFocValid(kSlaveXMotorFoc),
               "kSlaveXMotorFoc has invalid voltage, PID, or filter values");
 static_assert(slaveConfigMotorFocValid(kSlaveYMotorFoc),
               "kSlaveYMotorFoc has invalid voltage, PID, or filter values");
+static_assert(slaveConfigCurrentSenseHardwareValid(kSlaveCurrentSenseHardware),
+              "kSlaveCurrentSenseHardware has invalid ADC or gain values");
+static_assert(slaveConfigCurrentSenseAxisValid(kSlaveXCurrentSenseAxis),
+              "kSlaveXCurrentSenseAxis has invalid gain signs");
+static_assert(slaveConfigCurrentSenseAxisValid(kSlaveYCurrentSenseAxis),
+              "kSlaveYCurrentSenseAxis has invalid gain signs");
+static_assert(slaveConfigCurrentSenseDiagValid(kSlaveCurrentSenseDiag),
+              "kSlaveCurrentSenseDiag has invalid diagnostic timing values");
 
 static_assert(slaveConfigAxisValid(kSlaveXAxis),
               "kSlaveXAxis has invalid geometry or tracking values");

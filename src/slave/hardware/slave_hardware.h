@@ -2,11 +2,50 @@
 
 #include <stdint.h>
 
+#include "common/math/axis_math.h"
+
 struct SlaveXMotorStepTiming {
     uint32_t loop_foc_us;
     uint32_t move_us;
     uint32_t sensor_us;
     uint32_t loop_foc_ran;
+};
+
+struct SlaveMotorCurrentAxisSnapshot {
+    bool motor_ready;
+    bool current_sense_ready;
+    int raw_adc_a;
+    int raw_adc_b;
+    float offset_ia_v;
+    float offset_ib_v;
+    float current_q_a;
+    float current_d_a;
+    float voltage_q_v;
+    float voltage_d_v;
+};
+
+struct SlaveMotorCurrentSnapshot {
+    SlaveMotorCurrentAxisSnapshot x;
+    SlaveMotorCurrentAxisSnapshot y;
+};
+
+enum SlaveMotorTuningMode : uint8_t {
+    SLAVE_MOTOR_TUNING_CURRENT_Q = 1,
+    SLAVE_MOTOR_TUNING_VELOCITY = 2,
+    SLAVE_MOTOR_TUNING_ANGLE = 3,
+};
+
+struct SlaveMotorTuningFeedback {
+    bool ready;
+    float shaft_angle_rad;
+    float shaft_velocity_rad_s;
+    float current_q_a;
+    float current_d_a;
+    float voltage_q_v;
+    float voltage_d_v;
+    float current_setpoint_a;
+    float velocity_setpoint_rad_s;
+    float angle_setpoint_rad;
 };
 
 // 设置紫光 MOS 输出；只允许安全任务调用。
@@ -23,6 +62,17 @@ bool setupSlaveYMotorOpenLoopHardware();
 bool setupSlaveYMotorClosedLoopHardware();
 
 bool sampleSlaveYSensorForStatus(float *angle_rad, uint16_t *raw_angle);
+SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent();
+bool configureSlaveMotorTuning(AxisId axis,
+                               uint8_t mode,
+                               float p,
+                               float i,
+                               float d,
+                               float current_limit_a,
+                               float voltage_limit_v,
+                               float velocity_limit_rad_s);
+void restoreSlaveMotorTuning(AxisId axis);
+SlaveMotorTuningFeedback snapshotSlaveMotorTuning(AxisId axis);
 
 float applySlaveXMotorTarget(float target_angle_rad,
                              float fallback_actual_angle_rad,

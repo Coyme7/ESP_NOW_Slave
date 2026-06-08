@@ -18,6 +18,7 @@
 #include "slave/hardware/slave_hardware.h"
 #include "slave/modes/mode_guard.h"
 #include "slave/safety/slave_safety.h"
+#include "slave/vofa_tuner/vofa_tuner.h"
 
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
 #define SLAVE_TIMING_NOW_US() micros()
@@ -285,7 +286,6 @@ void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
     static SlaveTrajectorySmootherState y_smoother = {};
     static SlaveAxisCommandTargetState x_command_target = {};
     static SlaveAxisCommandTargetState y_command_target = {};
-
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     const uint32_t command_start_us = SLAVE_TIMING_NOW_US();
 #else
@@ -295,6 +295,7 @@ void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
     uint16_t faults = FAULT_NONE;
 
     const SlaveRtCommand command = readPlannerCommandForStep(now_us, faults);
+    SlaveRtCommand runtime_command = command;
 
     constexpr bool x_axis_enabled = slaveRunModeRunsAxis(AXIS_X);
     constexpr bool y_axis_enabled = slaveRunModeRunsAxis(AXIS_Y);
@@ -364,7 +365,7 @@ void runSlavePlannerStep(float dt_s, SlaveControlStepTiming *timing) {
     }
     updateRuntimeFromPlanner(x_plan,
                              y_plan,
-                             command,
+                             runtime_command,
                              pen_req,
                              draw_state,
                              draw_progress_pct,
@@ -468,6 +469,12 @@ void runSlaveControlStep(float dt_s, SlaveControlStepTiming *timing) {
 #if SLAVE_CONTROL_PERF_MODE != SLAVE_PERF_MODE_FULL_CONTROL
     runSlaveControlPerfIsolationStep(dt_s, timing);
     return;
+#endif
+
+#if SLAVE_VOFA_TUNER_ENABLED
+    if (runSlaveVofaTunerControlStep(dt_s, timing)) {
+        return;
+    }
 #endif
 
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED

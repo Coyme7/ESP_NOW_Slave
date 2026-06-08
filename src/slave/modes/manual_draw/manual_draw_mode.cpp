@@ -40,7 +40,7 @@ ModeCapability slaveManualDrawCapability(uint8_t run_mode) {
         case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
             capability.flags = y_hw | slaveRemoteCommandFlags();
             break;
-        case SLAVE_MODE_DUAL_XY_2KHZ_ID:
+        case SLAVE_MODE_DUAL_XY_4KHZ_ID:
             capability.flags = x_hw | y_hw | slaveRemoteCommandFlags() | MODE_CAP_PEN;
             if (SLAVE_UV_HW_ENABLED) {
                 capability.flags |= MODE_CAP_UV;
