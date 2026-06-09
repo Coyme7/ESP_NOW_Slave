@@ -279,6 +279,7 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
     }
     current_sense.gain_a *= (current_gain_sign_a < 0) ? -1.0f : 1.0f;
     current_sense.gain_b *= (current_gain_sign_b < 0) ? -1.0f : 1.0f;
+    current_sense.refreshFastScale();
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.printf("[Slave] motor_diag axis=%s current_sense offsets ia=%.3fV ib=%.3fV gain_a=%.2f gain_b=%.2f sign_a=%d sign_b=%d raw_adc=%d,%d raw16=%d,%d\n",
                   axis_name,

@@ -16,6 +16,7 @@ public:
     int driverAlign(float align_voltage) override;
     PhaseCurrent_s getPhaseCurrents() override;
 
+    void refreshFastScale();
     int readRawA() const;
     int readRawB() const;
     int readRawUnmaskedA() const;
@@ -26,8 +27,8 @@ public:
 
 private:
     static bool gpioToAdc1Channel(int pin, uint8_t &channel);
-    static int readFastRaw(int pin);
-    static int readFastRawUnmasked(int pin);
+    static int readFastRaw(uint8_t channel);
+    static int readFastRawUnmasked(uint8_t channel);
     void publishLastSample(int raw_a, int raw_b, const PhaseCurrent_s &current);
 
     int pin_a_ = NOT_SET;
@@ -35,7 +36,11 @@ private:
     bool has_phase_c_ = false;
     uint8_t chan_a_ = 0;
     uint8_t chan_b_ = 0;
-    float raw_to_voltage_v_ = 0.0f;
+    float raw_to_current_a_ = 0.0f;
+    float raw_to_current_b_ = 0.0f;
+    float offset_current_a_ = 0.0f;
+    float offset_current_b_ = 0.0f;
+    uint32_t telemetry_divider_ = 0;
     volatile uint32_t sample_seq_ = 0;
     volatile int last_raw_a_ = 0;
     volatile int last_raw_b_ = 0;

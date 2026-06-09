@@ -22,8 +22,13 @@
 static constexpr uint32_t SLAVE_CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US_CONFIG;
 static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 
+// DualXY 的位置/速度外环与 planner 统一按 1 kHz 运行。
+#ifndef SLAVE_DUAL_XY_OUTER_LOOP_EVERY_N_STEPS
+#define SLAVE_DUAL_XY_OUTER_LOOP_EVERY_N_STEPS 4UL
+#endif
+
 // planner 执行分频。
-// SLAVE_FAST_PLANNER_ENABLED=1 时每个 motor tick 运行一次；置 0 可回退到原 2 tick 分频。
+// DualXY 固定使用 1 kHz 外环；其他模式保留 fast planner 选择。
 #ifndef SLAVE_FAST_PLANNER_ENABLED
 #if SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID
 #define SLAVE_FAST_PLANNER_ENABLED 0
@@ -34,7 +39,9 @@ static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 
 // 每 N 个 motor tick 运行一次。
 #ifndef SLAVE_PLANNER_EVERY_N_STEPS
-#if SLAVE_FAST_PLANNER_ENABLED
+#if SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID
+#define SLAVE_PLANNER_EVERY_N_STEPS SLAVE_DUAL_XY_OUTER_LOOP_EVERY_N_STEPS
+#elif SLAVE_FAST_PLANNER_ENABLED
 #define SLAVE_PLANNER_EVERY_N_STEPS 1UL
 #else
 #define SLAVE_PLANNER_EVERY_N_STEPS 2UL
@@ -59,10 +66,13 @@ static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 #define SLAVE_X_FOC_EVERY_N_STEPS 1UL
 #endif
 
-// X 轴 move 分频。
-// 默认每个 motor tick 都写入最近目标。
+// X 轴 move 分频。DualXY 下为 1 kHz，其他模式保持每个 motor tick 更新。
 #ifndef SLAVE_X_MOVE_EVERY_N_STEPS
+#if SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID
+#define SLAVE_X_MOVE_EVERY_N_STEPS SLAVE_DUAL_XY_OUTER_LOOP_EVERY_N_STEPS
+#else
 #define SLAVE_X_MOVE_EVERY_N_STEPS 1UL
+#endif
 #endif
 
 // Y 轴 loopFOC 分频。
@@ -71,8 +81,11 @@ static constexpr uint32_t CONTROL_LOOP_PERIOD_US = SLAVE_CONTROL_LOOP_PERIOD_US;
 #define SLAVE_Y_FOC_EVERY_N_STEPS 1UL
 #endif
 
-// Y 轴 move 分频。
-// 仅在 run mode 选择 Y 电机硬件路径时生效。
+// Y 轴 move 分频。DualXY 下为 1 kHz，其他 Y 电机模式保持每个 motor tick 更新。
 #ifndef SLAVE_Y_MOVE_EVERY_N_STEPS
+#if SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID
+#define SLAVE_Y_MOVE_EVERY_N_STEPS SLAVE_DUAL_XY_OUTER_LOOP_EVERY_N_STEPS
+#else
 #define SLAVE_Y_MOVE_EVERY_N_STEPS 1UL
+#endif
 #endif

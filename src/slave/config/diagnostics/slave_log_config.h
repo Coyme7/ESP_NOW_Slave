@@ -16,7 +16,7 @@
 // 功能说明：启用低频状态任务日志。
 // 0：不创建状态日志输出；1：按周期输出摘要、XY 和 timing 状态。
 #ifndef SLAVE_STATUS_LOG_ENABLED
-#define SLAVE_STATUS_LOG_ENABLED (SLAVE_VOFA_TUNER_ENABLED ? 0 : 1)
+#define SLAVE_STATUS_LOG_ENABLED 1
 #endif
 
 // 功能说明：启用控制定时器启动日志。
@@ -34,7 +34,7 @@
 // timing 诊断等级。
 // 0：关闭；1：整步统计；2：完整分段统计。
 #ifndef SLAVE_TIMING_DIAG_LEVEL
-#define SLAVE_TIMING_DIAG_LEVEL 0
+#define SLAVE_TIMING_DIAG_LEVEL 1
 #endif
 
 #define SLAVE_TIMING_STEP_DIAG_ENABLED (SLAVE_TIMING_DIAG_LEVEL >= 1)

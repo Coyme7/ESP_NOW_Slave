@@ -27,6 +27,7 @@ PhaseCurrent_s sampleSlaveCurrentSenseVoltagesOnce(SlaveMotorDiagnosticsContext 
     context.current_sense.gain_a = 1.0f;
     context.current_sense.gain_b = 1.0f;
     context.current_sense.gain_c = 1.0f;
+    context.current_sense.refreshFastScale();
 
     const PhaseCurrent_s sample = context.current_sense.getPhaseCurrents();
 
@@ -36,6 +37,7 @@ PhaseCurrent_s sampleSlaveCurrentSenseVoltagesOnce(SlaveMotorDiagnosticsContext 
     context.current_sense.gain_a = saved_gain_a;
     context.current_sense.gain_b = saved_gain_b;
     context.current_sense.gain_c = saved_gain_c;
+    context.current_sense.refreshFastScale();
 
     return sample;
 }
@@ -138,6 +140,7 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
     context.current_sense.gain_a = 1.0f;
     context.current_sense.gain_b = 1.0f;
     context.current_sense.gain_c = 1.0f;
+    context.current_sense.refreshFastScale();
 
     float sum_a_v = 0.0f;
     float sum_b_v = 0.0f;
@@ -165,6 +168,7 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
         context.current_sense.gain_a = saved_gain_a;
         context.current_sense.gain_b = saved_gain_b;
         context.current_sense.gain_c = saved_gain_c;
+        context.current_sense.refreshFastScale();
         const int runtime_raw_adc_a = context.current_sense.readRawA();
         const int runtime_raw_adc_b = context.current_sense.readRawB();
         const int runtime_raw_unmasked_a = context.current_sense.readRawUnmaskedA();
@@ -192,6 +196,7 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
     context.current_sense.gain_a = saved_gain_a;
     context.current_sense.gain_b = saved_gain_b;
     context.current_sense.gain_c = saved_gain_c;
+    context.current_sense.refreshFastScale();
 
     const int runtime_raw_adc_a = context.current_sense.readRawA();
     const int runtime_raw_adc_b = context.current_sense.readRawB();

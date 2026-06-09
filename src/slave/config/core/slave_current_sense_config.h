@@ -2,6 +2,26 @@
 
 #include "slave/config/types/slave_current_sense_types.h"
 
+// ADC 后端选择。
+// 默认只使用 ESP-IDF v4.4 ADC1 single-read API；LL/DMA 后端仅作为后续硬件验证入口，
+// 未完成采样延迟和 PWM 相位偏差验证前不得设为默认。
+#ifndef SLAVE_ADC_BACKEND_IDF_SINGLE_READ
+#define SLAVE_ADC_BACKEND_IDF_SINGLE_READ 1
+#endif
+
+#ifndef SLAVE_ADC_BACKEND_FAST_LL
+#define SLAVE_ADC_BACKEND_FAST_LL 0
+#endif
+
+#ifndef SLAVE_ADC_BACKEND_DMA
+#define SLAVE_ADC_BACKEND_DMA 0
+#endif
+
+// 电流采样遥测缓存发布分频。FOC 实时返回值每次都更新；这里只限制低频状态快照读取的数据写入频率。
+#ifndef SLAVE_CURRENT_SENSE_TELEMETRY_EVERY_N_STEPS
+#define SLAVE_CURRENT_SENSE_TELEMETRY_EVERY_N_STEPS SLAVE_MOTION_SNAPSHOT_EVERY_N_STEPS
+#endif
+
 // 电流采样硬件换算配置。
 // shunt/gain 必须与 DengV3 驱动板实物一致，ADC 满量程按 DB_12 级 3.10V 计算。
 static constexpr SlaveCurrentSenseHardwareConfig kSlaveCurrentSenseHardware = {

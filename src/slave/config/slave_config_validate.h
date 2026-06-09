@@ -58,6 +58,30 @@ static_assert(SLAVE_Y_FOC_EVERY_N_STEPS > 0,
               "SLAVE_Y_FOC_EVERY_N_STEPS must be greater than 0");
 static_assert(SLAVE_Y_MOVE_EVERY_N_STEPS > 0,
               "SLAVE_Y_MOVE_EVERY_N_STEPS must be greater than 0");
+#if SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID
+static_assert((SLAVE_CONTROL_LOOP_PERIOD_US * SLAVE_X_FOC_EVERY_N_STEPS) == 250UL,
+              "DualXY X loopFOC must run at 4 kHz");
+static_assert((SLAVE_CONTROL_LOOP_PERIOD_US * SLAVE_Y_FOC_EVERY_N_STEPS) == 250UL,
+              "DualXY Y loopFOC must run at 4 kHz");
+static_assert((SLAVE_CONTROL_LOOP_PERIOD_US * SLAVE_X_MOVE_EVERY_N_STEPS) == 1000UL,
+              "DualXY X move must run at 1 kHz");
+static_assert((SLAVE_CONTROL_LOOP_PERIOD_US * SLAVE_Y_MOVE_EVERY_N_STEPS) == 1000UL,
+              "DualXY Y move must run at 1 kHz");
+static_assert((SLAVE_CONTROL_LOOP_PERIOD_US * SLAVE_PLANNER_EVERY_N_STEPS) == 1000UL,
+              "DualXY planner must run at 1 kHz");
+#endif
+static_assert(SLAVE_CURRENT_SENSE_TELEMETRY_EVERY_N_STEPS > 0,
+              "SLAVE_CURRENT_SENSE_TELEMETRY_EVERY_N_STEPS must be greater than 0");
+static_assert((SLAVE_ADC_BACKEND_IDF_SINGLE_READ == 0 || SLAVE_ADC_BACKEND_IDF_SINGLE_READ == 1) &&
+                  (SLAVE_ADC_BACKEND_FAST_LL == 0 || SLAVE_ADC_BACKEND_FAST_LL == 1) &&
+                  (SLAVE_ADC_BACKEND_DMA == 0 || SLAVE_ADC_BACKEND_DMA == 1),
+              "SLAVE_ADC_BACKEND_* flags must be 0 or 1");
+static_assert((SLAVE_ADC_BACKEND_IDF_SINGLE_READ +
+               SLAVE_ADC_BACKEND_FAST_LL +
+               SLAVE_ADC_BACKEND_DMA) == 1,
+              "exactly one SLAVE_ADC_BACKEND_* flag must be enabled");
+static_assert(SLAVE_ADC_BACKEND_IDF_SINGLE_READ,
+              "only SLAVE_ADC_BACKEND_IDF_SINGLE_READ is implemented for validated firmware");
 
 static_assert(!(SLAVE_AUTO_DRAW_ENABLED && !SLAVE_ESPNOW_ENABLED),
               "SLAVE_AUTO_DRAW_ENABLED requires SLAVE_ESPNOW_ENABLED");
