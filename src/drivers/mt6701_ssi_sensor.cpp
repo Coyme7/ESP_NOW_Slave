@@ -1,5 +1,9 @@
 #include "drivers/mt6701_ssi_sensor.h"
 
+#if __has_include(<esp_arduino_version.h>)
+#include <esp_arduino_version.h>
+#endif
+
 #include "soc/gpio_struct.h"
 
 Mt6701SsiFastReader::Mt6701SsiFastReader(int cs_pin)
@@ -35,7 +39,11 @@ Mt6701SsiFrame Mt6701SsiFastReader::readFrame() {
     setCsLow();
 
     uint32_t frame = 0;
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    spi_->transferBits(0, &frame, 24);
+#else
     spiTransferBitsNL(spi_->bus(), 0, &frame, 24);
+#endif
 
     setCsHigh();
 

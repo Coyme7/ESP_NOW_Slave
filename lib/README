@@ -1,46 +1,12 @@
+本目录只放从机固件需要随仓库固定的本地库。
 
-This directory is intended for project specific (private) libraries.
-PlatformIO will compile them to static libraries and link into the executable file.
+当前固定库：
 
-The source code of each library should be placed in a separate directory
-("lib/your_library_name/[Code]").
+- `SimpleFOC-2.4.0`
+  - 来源：`https://github.com/simplefoc/Arduino-FOC.git`
+  - 版本：`2.4.0`
+  - 已验证提交：`4f072b3`
+  - 保留内容：`src/`、`library.properties`、`library.json`、`LICENSE`、`README.md`、`keywords.txt`
 
-For example, see the structure of the following example libraries `Foo` and `Bar`:
-
-|--lib
-|  |
-|  |--Bar
-|  |  |--docs
-|  |  |--examples
-|  |  |--src
-|  |     |- Bar.c
-|  |     |- Bar.h
-|  |  |- library.json (optional. for custom build options, etc) https://docs.platformio.org/page/librarymanager/config.html
-|  |
-|  |--Foo
-|  |  |- Foo.c
-|  |  |- Foo.h
-|  |
-|  |- README --> THIS FILE
-|
-|- platformio.ini
-|--src
-   |- main.c
-
-Example contents of `src/main.c` using Foo and Bar:
-```
-#include <Foo.h>
-#include <Bar.h>
-
-int main (void)
-{
-  ...
-}
-
-```
-
-The PlatformIO Library Dependency Finder will find automatically dependent
-libraries by scanning project source files.
-
-More information about PlatformIO Library Dependency Finder
-- https://docs.platformio.org/page/librarymanager/ldf.html
+不要恢复或新增 `Arduino-FOC-2.3.3`，否则会覆盖目标 SimpleFOC 2.4.0。
+主机和从机的 `SimpleFOC-2.4.0` 必须保持同源同提交。

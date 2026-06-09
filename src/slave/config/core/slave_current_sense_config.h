@@ -13,6 +13,9 @@ static constexpr SlaveCurrentSenseHardwareConfig kSlaveCurrentSenseHardware = {
     true,            // 跳过 SimpleFOC driverAlign，采样方向由 bring-up 参数决定。
 };
 
+// 连续四个完整 A/B 采样周期失败后禁用对应轴；从机 4kHz 下约为 1ms。
+static constexpr uint16_t kSlaveCurrentSenseAdcConsecutiveErrorLimit = 4U;
+
 // X/Y 轴电流采样方向符号。
 // Y 默认复用已验证 X 符号；实机 bring-up 后可单独改 kSlaveYCurrentSenseAxis。
 static constexpr SlaveCurrentSenseAxisConfig kSlaveXCurrentSenseAxis = {

@@ -16,6 +16,8 @@ struct SlaveMotorCurrentAxisSnapshot {
     bool current_sense_ready;
     int raw_adc_a;
     int raw_adc_b;
+    uint32_t adc_read_errors;
+    uint16_t adc_consecutive_errors;
     float offset_ia_v;
     float offset_ib_v;
     float current_q_a;

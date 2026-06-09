@@ -66,12 +66,10 @@ void logSlaveCurrentProbeSample(SlaveMotorDiagnosticsContext &context,
     const PhaseCurrent_s voltage = sampleSlaveCurrentSenseVoltagesOnce(context);
     const int raw_adc_a = context.current_sense.readRawA();
     const int raw_adc_b = context.current_sense.readRawB();
-    const int raw_unmasked_a = context.current_sense.readRawUnmaskedA();
-    const int raw_unmasked_b = context.current_sense.readRawUnmaskedB();
     const float delta_mv_a = (voltage.a - context.current_sense.offset_ia) * 1000.0f;
     const float delta_mv_b = (voltage.b - context.current_sense.offset_ib) * 1000.0f;
     context.sensor.update();
-    Serial.printf("[Slave] current_probe axis=%s %s %s pwm=%.2f,%.2f,%.2f va=%.4fV vb=%.4fV dmv_a=%.1f dmv_b=%.1f ia=%.4fA ib=%.4fA raw_adc=%d,%d raw16=%d,%d raw=%u angle=%.2fdeg\n",
+    Serial.printf("[Slave] current_probe axis=%s %s %s pwm=%.2f,%.2f,%.2f va=%.4fV vb=%.4fV dmv_a=%.1f dmv_b=%.1f ia=%.4fA ib=%.4fA raw_adc=%d,%d adc_errors=%lu raw=%u angle=%.2fdeg\n",
                   context.axis_name,
                   label,
                   stage,
@@ -86,8 +84,7 @@ void logSlaveCurrentProbeSample(SlaveMotorDiagnosticsContext &context,
                   current.b,
                   raw_adc_a,
                   raw_adc_b,
-                  raw_unmasked_a,
-                  raw_unmasked_b,
+                  static_cast<unsigned long>(context.current_sense.readErrorCount()),
                   static_cast<unsigned int>(context.sensor.rawAngle()),
                   radToDeg(context.sensor.getMechanicalAngle()));
 }
@@ -121,6 +118,7 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
     const float saved_gain_b = context.current_sense.gain_b;
     const float saved_gain_c = context.current_sense.gain_c;
     const float saved_offset_ic = context.current_sense.offset_ic;
+    const uint32_t errors_before = context.current_sense.readErrorCount();
     const uint32_t calibration_reads =
         (kSlaveCurrentSenseDiag.offset_reads > 0)
             ? kSlaveCurrentSenseDiag.offset_reads
@@ -158,7 +156,8 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
         delay(1);
     }
 
-    if (valid_reads == 0) {
+    const uint32_t errors_after = context.current_sense.readErrorCount();
+    if (valid_reads == 0 || errors_after != errors_before) {
         context.current_sense.offset_ia = 0.0f;
         context.current_sense.offset_ib = 0.0f;
         context.current_sense.offset_ic = saved_offset_ic;
@@ -167,22 +166,19 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
         context.current_sense.gain_c = saved_gain_c;
         const int runtime_raw_adc_a = context.current_sense.readRawA();
         const int runtime_raw_adc_b = context.current_sense.readRawB();
-        const int runtime_raw_unmasked_a = context.current_sense.readRawUnmaskedA();
-        const int runtime_raw_unmasked_b = context.current_sense.readRawUnmaskedB();
         context.driver.setPwm(0.0f, 0.0f, 0.0f);
         context.driver.disable();
 #if SLAVE_VOFA_TUNER_ENABLED
-        Serial.printf("# [Slave] motor_diag axis=%s current_sense offset_cal failed saturated valid=%lu skipped=%lu raw_adc=%d,%d raw16=%d,%d\n",
+        Serial.printf("# [Slave] motor_diag axis=%s current_sense offset_cal failed valid=%lu skipped=%lu raw_adc=%d,%d adc_errors=%lu\n",
 #else
-        Serial.printf("[Slave] motor_diag axis=%s current_sense offset_cal failed saturated valid=%lu skipped=%lu raw_adc=%d,%d raw16=%d,%d\n",
+        Serial.printf("[Slave] motor_diag axis=%s current_sense offset_cal failed valid=%lu skipped=%lu raw_adc=%d,%d adc_errors=%lu\n",
 #endif
                       context.axis_name,
                       static_cast<unsigned long>(valid_reads),
                       static_cast<unsigned long>(saturated_reads),
                       runtime_raw_adc_a,
                       runtime_raw_adc_b,
-                      runtime_raw_unmasked_a,
-                      runtime_raw_unmasked_b);
+                      static_cast<unsigned long>(context.current_sense.readErrorCount()));
         return false;
     }
 
@@ -195,15 +191,31 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
 
     const int runtime_raw_adc_a = context.current_sense.readRawA();
     const int runtime_raw_adc_b = context.current_sense.readRawB();
-    const int runtime_raw_unmasked_a = context.current_sense.readRawUnmaskedA();
-    const int runtime_raw_unmasked_b = context.current_sense.readRawUnmaskedB();
+    if (context.current_sense.readErrorCount() != errors_after) {
+        context.current_sense.offset_ia = 0.0f;
+        context.current_sense.offset_ib = 0.0f;
+        context.current_sense.offset_ic = saved_offset_ic;
+        context.current_sense.gain_a = saved_gain_a;
+        context.current_sense.gain_b = saved_gain_b;
+        context.current_sense.gain_c = saved_gain_c;
+        context.driver.setPwm(0.0f, 0.0f, 0.0f);
+        context.driver.disable();
+#if SLAVE_VOFA_TUNER_ENABLED
+        Serial.printf("# [Slave] motor_diag axis=%s current_sense offset_cal failed postcheck adc_errors=%lu\n",
+#else
+        Serial.printf("[Slave] motor_diag axis=%s current_sense offset_cal failed postcheck adc_errors=%lu\n",
+#endif
+                      context.axis_name,
+                      static_cast<unsigned long>(context.current_sense.readErrorCount()));
+        return false;
+    }
     context.driver.setPwm(0.0f, 0.0f, 0.0f);
     context.driver.disable();
 
 #if SLAVE_VOFA_TUNER_ENABLED
-    Serial.printf("# [Slave] motor_diag axis=%s current_sense offset_cal mode=driver_enabled_pwm0 settle=%ums samples=%lu valid=%lu skipped=%lu ia=%.4fV ib=%.4fV raw_adc=%d,%d raw16=%d,%d\n",
+    Serial.printf("# [Slave] motor_diag axis=%s current_sense offset_cal mode=driver_enabled_pwm0 settle=%ums samples=%lu valid=%lu skipped=%lu ia=%.4fV ib=%.4fV raw_adc=%d,%d adc_errors=%lu\n",
 #else
-    Serial.printf("[Slave] motor_diag axis=%s current_sense offset_cal mode=driver_enabled_pwm0 settle=%ums samples=%lu valid=%lu skipped=%lu ia=%.4fV ib=%.4fV raw_adc=%d,%d raw16=%d,%d\n",
+    Serial.printf("[Slave] motor_diag axis=%s current_sense offset_cal mode=driver_enabled_pwm0 settle=%ums samples=%lu valid=%lu skipped=%lu ia=%.4fV ib=%.4fV raw_adc=%d,%d adc_errors=%lu\n",
 #endif
                   context.axis_name,
                   static_cast<unsigned int>(kSlaveCurrentSenseDiag.offset_settle_ms),
@@ -214,8 +226,7 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
                   context.current_sense.offset_ib,
                   runtime_raw_adc_a,
                   runtime_raw_adc_b,
-                  runtime_raw_unmasked_a,
-                  runtime_raw_unmasked_b);
+                  static_cast<unsigned long>(context.current_sense.readErrorCount()));
     return true;
 #else
     (void)context;

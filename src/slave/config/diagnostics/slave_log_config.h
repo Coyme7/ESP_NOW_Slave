@@ -34,7 +34,7 @@
 // timing 诊断等级。
 // 0：关闭；1：整步统计；2：完整分段统计。
 #ifndef SLAVE_TIMING_DIAG_LEVEL
-#define SLAVE_TIMING_DIAG_LEVEL 0
+#define SLAVE_TIMING_DIAG_LEVEL 2
 #endif
 
 #define SLAVE_TIMING_STEP_DIAG_ENABLED (SLAVE_TIMING_DIAG_LEVEL >= 1)

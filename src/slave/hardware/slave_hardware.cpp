@@ -111,6 +111,29 @@ void markSlaveMotorInitFault(BLDCDriver3PWM &driver) {
     addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
 }
 
+#if SLAVE_ENABLE_CURRENT_SENSE
+bool disableSlaveMotorOnAdcFault(BLDCMotor &motor,
+                                 BLDCDriver3PWM &driver,
+                                 SlaveAdc1CurrentSense &current_sense,
+                                 bool &motor_ready,
+                                 bool &current_sense_ready) {
+    if (!current_sense.readFaulted()) {
+        return false;
+    }
+
+    motor.target = 0.0f;
+    motor.current_sp = 0.0f;
+    motor.PID_current_q.reset();
+    motor.PID_current_d.reset();
+    driver.disable();
+    motor_ready = false;
+    current_sense_ready = false;
+    setUvOutput(false);
+    addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+    return true;
+}
+#endif
+
 bool initSlaveMotorFocForAxis(const char *axis,
                               BLDCMotor &motor,
                               BLDCDriver3PWM &driver,
@@ -280,7 +303,7 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
     current_sense.gain_a *= (current_gain_sign_a < 0) ? -1.0f : 1.0f;
     current_sense.gain_b *= (current_gain_sign_b < 0) ? -1.0f : 1.0f;
 #if SLAVE_BOOT_LOG_ENABLED
-    Serial.printf("[Slave] motor_diag axis=%s current_sense offsets ia=%.3fV ib=%.3fV gain_a=%.2f gain_b=%.2f sign_a=%d sign_b=%d raw_adc=%d,%d raw16=%d,%d\n",
+    Serial.printf("[Slave] motor_diag axis=%s current_sense offsets ia=%.3fV ib=%.3fV gain_a=%.2f gain_b=%.2f sign_a=%d sign_b=%d raw_adc=%d,%d adc_errors=%lu\n",
                   axis_name,
                   current_sense.offset_ia,
                   current_sense.offset_ib,
@@ -290,9 +313,12 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
                   current_gain_sign_b,
                   current_sense.readRawA(),
                   current_sense.readRawB(),
-                  current_sense.readRawUnmaskedA(),
-                  current_sense.readRawUnmaskedB());
+                  static_cast<unsigned long>(current_sense.readErrorCount()));
 #endif
+    if (current_sense.readErrorCount() != 0U) {
+        markSlaveMotorInitFault(driver);
+        return false;
+    }
     motor.linkCurrentSense(&current_sense);
 #if SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST
     runSlaveCurrentSenseProbe(diagnostics);
@@ -563,6 +589,22 @@ float applySlaveXMotorTarget(float target_angle_rad,
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         move_start_us = micros();
 #endif
+#if SLAVE_ENABLE_CURRENT_SENSE
+        if (disableSlaveMotorOnAdcFault(xMotor,
+                                        xDriver,
+                                        xCurrentSense,
+                                        xMotorReady,
+                                        xCurrentSenseReady)) {
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
+            if (timing != nullptr) {
+                timing->loop_foc_us = move_start_us - foc_start_us;
+                timing->sensor_us = xSensor.lastReadDurationUs();
+                timing->loop_foc_ran = 1UL;
+            }
+#endif
+            return fallback_actual_angle_rad;
+        }
+#endif
     }
     static uint32_t move_divider = 0;
     const uint32_t move_interval =
@@ -642,6 +684,15 @@ float runSlaveXMotorPerfIsolationStep(float target_angle_rad,
     const uint32_t foc_start_us = micros();
 #endif
     xMotor.loopFOC();
+#if SLAVE_ENABLE_CURRENT_SENSE
+    if (disableSlaveMotorOnAdcFault(xMotor,
+                                    xDriver,
+                                    xCurrentSense,
+                                    xMotorReady,
+                                    xCurrentSenseReady)) {
+        return fallback_actual_angle_rad;
+    }
+#endif
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     const uint32_t foc_done_us = micros();
     if (timing != nullptr) {
@@ -714,6 +765,24 @@ float applySlaveYMotorTarget(float target_angle_rad,
         yMotor.loopFOC();
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         move_start_us = micros();
+#endif
+#if SLAVE_ENABLE_CURRENT_SENSE
+        if (disableSlaveMotorOnAdcFault(yMotor,
+                                        yDriver,
+                                        yCurrentSense,
+                                        yMotorReady,
+                                        yCurrentSenseReady)) {
+#if SLAVE_TIMING_DETAIL_DIAG_ENABLED
+            if (timing != nullptr) {
+                timing->loop_foc_us = move_start_us - foc_start_us;
+#if SLAVE_Y_SENSOR_HW_ENABLED
+                timing->sensor_us = ySensor.lastReadDurationUs();
+#endif
+                timing->loop_foc_ran = 1UL;
+            }
+#endif
+            return fallback_actual_angle_rad;
+        }
 #endif
     }
     static uint32_t move_divider = 0;
@@ -802,6 +871,8 @@ SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent() {
     snapshot.x.current_sense_ready = xCurrentSenseReady;
     snapshot.x.raw_adc_a = xCurrentSense.lastRawA();
     snapshot.x.raw_adc_b = xCurrentSense.lastRawB();
+    snapshot.x.adc_read_errors = xCurrentSense.readErrorCount();
+    snapshot.x.adc_consecutive_errors = xCurrentSense.consecutiveReadErrors();
     snapshot.x.offset_ia_v = xCurrentSense.offset_ia;
     snapshot.x.offset_ib_v = xCurrentSense.offset_ib;
 #endif
@@ -825,6 +896,8 @@ SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent() {
     snapshot.y.current_sense_ready = yCurrentSenseReady;
     snapshot.y.raw_adc_a = yCurrentSense.lastRawA();
     snapshot.y.raw_adc_b = yCurrentSense.lastRawB();
+    snapshot.y.adc_read_errors = yCurrentSense.readErrorCount();
+    snapshot.y.adc_consecutive_errors = yCurrentSense.consecutiveReadErrors();
     snapshot.y.offset_ia_v = yCurrentSense.offset_ia;
     snapshot.y.offset_ib_v = yCurrentSense.offset_ib;
 #endif

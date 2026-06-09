@@ -13,21 +13,21 @@ public:
                           int pinC = NOT_SET);
 
     int init() override;
-    int driverAlign(float align_voltage) override;
+    int driverAlign(float align_voltage, bool modulation_centered = false) override;
     PhaseCurrent_s getPhaseCurrents() override;
 
     int readRawA() const;
     int readRawB() const;
-    int readRawUnmaskedA() const;
-    int readRawUnmaskedB() const;
     int lastRawA() const;
     int lastRawB() const;
     PhaseCurrent_s lastPhaseCurrents() const;
+    uint32_t readErrorCount() const;
+    uint16_t consecutiveReadErrors() const;
+    bool readFaulted() const;
 
 private:
     static bool gpioToAdc1Channel(int pin, uint8_t &channel);
-    static int readFastRaw(int pin);
-    static int readFastRawUnmasked(int pin);
+    bool readChannel(uint8_t channel, int &raw) const;
     void publishLastSample(int raw_a, int raw_b, const PhaseCurrent_s &current);
 
     int pin_a_ = NOT_SET;
@@ -42,4 +42,6 @@ private:
     volatile float last_current_a_ = 0.0f;
     volatile float last_current_b_ = 0.0f;
     volatile float last_current_c_ = 0.0f;
+    mutable volatile uint32_t read_error_count_ = 0;
+    volatile uint16_t consecutive_read_errors_ = 0;
 };

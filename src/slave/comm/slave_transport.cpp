@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_idf_version.h>
 
 #include "common/protocol/packet_codec.h"
 #include "common/system_state.h"
@@ -40,8 +41,7 @@ uint32_t lastAcceptedCommandSeq = 0;
 bool hasAcceptedTrajectorySegment = false;
 uint32_t lastAcceptedTrajectorySeq = 0;
 
-void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
-    (void)mac;
+void handleDataSent(esp_now_send_status_t status) {
     // ESP-NOW 发送回调只记录结果，不打印、不重发、不控制 UV 或电机。
     if (status == ESP_NOW_SEND_SUCCESS) {
         sysData.link.espnow_send_ok_count++;
@@ -51,6 +51,18 @@ void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
         sysData.link.last_send_ok = 0;
     }
 }
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+void onDataSent(const esp_now_send_info_t *txInfo, esp_now_send_status_t status) {
+    (void)txInfo;
+    handleDataSent(status);
+}
+#else
+void onDataSent(const uint8_t *mac, esp_now_send_status_t status) {
+    (void)mac;
+    handleDataSent(status);
+}
+#endif
 
 void recordRejectedCommandFault(uint16_t fault) {
     // 协议错误包只计数并锁存为本地故障。
@@ -73,8 +85,7 @@ void recordDuplicateCommandOnly(uint32_t seq) {
     sysData.link.espnow_recv_duplicate_count++;
 }
 
-void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-    (void)mac;
+void handleDataRecv(const uint8_t *incomingData, int len) {
     // 回调只复制最新 raw packet，不做协议校验、seq 判断、fault 更新或 sysData 写入。
     portENTER_CRITICAL(&commandPendingMux);
     const int packet_len = (incomingData != nullptr) ? len : 0;
@@ -96,6 +107,18 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     }
     portEXIT_CRITICAL(&commandPendingMux);
 }
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+void onDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *incomingData, int len) {
+    (void)recvInfo;
+    handleDataRecv(incomingData, len);
+}
+#else
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+    (void)mac;
+    handleDataRecv(incomingData, len);
+}
+#endif
 
 }  // namespace
 

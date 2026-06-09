@@ -90,13 +90,13 @@ enum SlaveRunMode : uint8_t {
 // 功能说明：启用 Y 轴真实电机输出。
 // 0：不编译 Y 电机驱动对象；1：允许 run mode 初始化 Y 电机。
 #ifndef SLAVE_Y_MOTOR_HW_ENABLED
-#define SLAVE_Y_MOTOR_HW_ENABLED 0
+#define SLAVE_Y_MOTOR_HW_ENABLED 1
 #endif
 
 // 功能说明：启用 Y 轴 MT6701 编码器。
 // 0：不编译 Y 编码器对象；1：允许 run mode 初始化 Y 编码器。
 #ifndef SLAVE_Y_SENSOR_HW_ENABLED
-#define SLAVE_Y_SENSOR_HW_ENABLED 0
+#define SLAVE_Y_SENSOR_HW_ENABLED 1
 #endif
 
 // 功能说明：启用真实 UV MOS 输出。
