@@ -21,6 +21,9 @@ namespace {
 
 TaskHandle_t controlTaskHandle = nullptr;
 esp_timer_handle_t controlTimerHandle = nullptr;
+#if SLAVE_VOFA_TUNER_ENABLED
+TaskHandle_t vofaTunerTaskHandle = nullptr;
+#endif
 volatile uint32_t controlTimerMissedTicks = 0;
 volatile uint32_t controlTimerLastDtUs = 0;
 #if SLAVE_TIMING_STEP_DIAG_ENABLED
@@ -313,6 +316,29 @@ void task_vofa_tuner_loop(void *pvParameters) {
 
 }  // namespace
 
+bool startSlaveVofaTunerTask() {
+#if SLAVE_VOFA_TUNER_ENABLED
+    if (vofaTunerTaskHandle != nullptr) {
+        return true;
+    }
+    const BaseType_t result =
+        xTaskCreatePinnedToCore(task_vofa_tuner_loop,
+                                "SlaveVofaTuner",
+                                SLAVE_VOFA_TUNER_TASK_STACK_BYTES,
+                                NULL,
+                                SLAVE_VOFA_TUNER_TASK_PRIORITY,
+                                &vofaTunerTaskHandle,
+                                SLAVE_IO_CORE);
+    if (result != pdPASS) {
+        vofaTunerTaskHandle = nullptr;
+        Serial.printf("# VOFA task create failed code=%ld\n",
+                      static_cast<long>(result));
+        return false;
+    }
+#endif
+    return true;
+}
+
 extern "C" void recordSlaveTimingCurrentSenseUs(uint32_t duration_us) {
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     controlCurrentSenseLastUs = duration_us;
@@ -351,13 +377,7 @@ void startSlaveTasks() {
                             SLAVE_IO_CORE);
 #endif
 #if SLAVE_VOFA_TUNER_ENABLED
-    xTaskCreatePinnedToCore(task_vofa_tuner_loop,
-                            "SlaveVofaTuner",
-                            SLAVE_VOFA_TUNER_TASK_STACK_BYTES,
-                            NULL,
-                            SLAVE_VOFA_TUNER_TASK_PRIORITY,
-                            NULL,
-                            SLAVE_IO_CORE);
+    (void)startSlaveVofaTunerTask();
 #endif
     xTaskCreatePinnedToCore(task_control_loop,
                             "SlaveControl",

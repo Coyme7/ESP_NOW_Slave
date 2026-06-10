@@ -72,11 +72,14 @@ SlaveVofaCommand pending_command = {
 SlaveVofaSample latest_sample = {};
 volatile bool tuner_requested = false;
 volatile bool tuner_control_active = false;
+volatile bool vofa_hardware_ready = false;
 
 const char *modeName(SlaveVofaTunerMode mode) {
     switch (mode) {
         case SLAVE_VOFA_MODE_CURRENT_Q:
             return "CURRENT_Q";
+        case SLAVE_VOFA_MODE_CURRENT_RAW:
+            return "CURRENT_RAW";
         case SLAVE_VOFA_MODE_VELOCITY:
             return "VELOCITY";
         case SLAVE_VOFA_MODE_ANGLE:
@@ -90,6 +93,7 @@ const char *modeName(SlaveVofaTunerMode mode) {
 uint8_t motorTuningMode(SlaveVofaTunerMode mode) {
     switch (mode) {
         case SLAVE_VOFA_MODE_CURRENT_Q:
+        case SLAVE_VOFA_MODE_CURRENT_RAW:
             return SLAVE_MOTOR_TUNING_CURRENT_Q;
         case SLAVE_VOFA_MODE_VELOCITY:
             return SLAVE_MOTOR_TUNING_VELOCITY;
@@ -99,6 +103,11 @@ uint8_t motorTuningMode(SlaveVofaTunerMode mode) {
         default:
             return 0;
     }
+}
+
+bool modeUsesCurrentLoop(SlaveVofaTunerMode mode) {
+    return mode == SLAVE_VOFA_MODE_CURRENT_Q ||
+           mode == SLAVE_VOFA_MODE_CURRENT_RAW;
 }
 
 bool axisEnabled(AxisId axis) {
@@ -121,21 +130,21 @@ uint32_t parseUint32(const char *text, bool *valid) {
 }
 
 float pidMaxP(SlaveVofaTunerMode mode) {
-    return mode == SLAVE_VOFA_MODE_CURRENT_Q
+    return modeUsesCurrentLoop(mode)
                ? SLAVE_VOFA_CURRENT_PID_P_MAX
                : (mode == SLAVE_VOFA_MODE_VELOCITY ? SLAVE_VOFA_VELOCITY_PID_P_MAX
                                                     : SLAVE_VOFA_ANGLE_PID_P_MAX);
 }
 
 float pidMaxI(SlaveVofaTunerMode mode) {
-    return mode == SLAVE_VOFA_MODE_CURRENT_Q
+    return modeUsesCurrentLoop(mode)
                ? SLAVE_VOFA_CURRENT_PID_I_MAX
                : (mode == SLAVE_VOFA_MODE_VELOCITY ? SLAVE_VOFA_VELOCITY_PID_I_MAX
                                                     : SLAVE_VOFA_ANGLE_PID_I_MAX);
 }
 
 float pidMaxD(SlaveVofaTunerMode mode) {
-    return mode == SLAVE_VOFA_MODE_CURRENT_Q
+    return modeUsesCurrentLoop(mode)
                ? SLAVE_VOFA_CURRENT_PID_D_MAX
                : (mode == SLAVE_VOFA_MODE_VELOCITY ? SLAVE_VOFA_VELOCITY_PID_D_MAX
                                                     : SLAVE_VOFA_ANGLE_PID_D_MAX);
@@ -151,6 +160,12 @@ void setDefaultPid(SlaveVofaCommand &command) {
             command.d = config.current_loop.q.d;
             command.amplitude = fminf(SLAVE_VOFA_CURRENT_LIMIT_DEFAULT_A,
                                       command.current_limit_a);
+            break;
+        case SLAVE_VOFA_MODE_CURRENT_RAW:
+            command.p = 0.0f;
+            command.i = 0.0f;
+            command.d = 0.0f;
+            command.amplitude = 0.0f;
             break;
         case SLAVE_VOFA_MODE_VELOCITY:
             command.p = config.velocity.p;
@@ -179,6 +194,7 @@ void setDefaultPid(SlaveVofaCommand &command) {
 float activeAmplitudeLimit(const SlaveVofaCommand &command) {
     switch (command.mode) {
         case SLAVE_VOFA_MODE_CURRENT_Q:
+        case SLAVE_VOFA_MODE_CURRENT_RAW:
             return command.current_limit_a;
         case SLAVE_VOFA_MODE_VELOCITY:
             return command.velocity_limit_rad_s;
@@ -244,6 +260,9 @@ SlaveVofaTunerMode parseMode(const char *token) {
     if (strcmp(token, "current_q") == 0 || strcmp(token, "current") == 0) {
         return SLAVE_VOFA_MODE_CURRENT_Q;
     }
+    if (strcmp(token, "current_raw") == 0 || strcmp(token, "raw") == 0) {
+        return SLAVE_VOFA_MODE_CURRENT_RAW;
+    }
     if (strcmp(token, "velocity") == 0 || strcmp(token, "vel") == 0) {
         return SLAVE_VOFA_MODE_VELOCITY;
     }
@@ -255,7 +274,7 @@ SlaveVofaTunerMode parseMode(const char *token) {
 
 void printHelp() {
     Serial.println("# VOFA tuner commands");
-    Serial.println("# vofa start <x|y> <current_q|velocity|angle>");
+    Serial.println("# vofa start <x|y> <current_q|current_raw|velocity|angle>");
     Serial.println("# vofa pid <p> <i> <d>");
     Serial.println("# vofa amp <value>");
     Serial.println("# vofa limits <current_a> <voltage_v> <velocity_rad_s> <angle_rad>");
@@ -263,6 +282,7 @@ void printHelp() {
     Serial.println("# vofa wave <2000..60000_ms>");
     Serial.println("# vofa status");
     Serial.println("# vofa stop");
+    Serial.println("# current_raw starts with pid=0 and amp=0");
     Serial.println("# tune order: CURRENT_Q -> VELOCITY -> ANGLE");
 }
 
@@ -281,6 +301,41 @@ void printStatus(const SlaveVofaCommand &command) {
                   command.angle_limit_rad,
                   static_cast<unsigned long>(command.wave_period_ms),
                   static_cast<unsigned long>(command.sample_period_ms));
+    const SlaveMotorCurrentSnapshot current = snapshotSlaveMotorCurrent();
+    const SlaveMotorCurrentAxisSnapshot &axis =
+        command.axis == AXIS_X ? current.x : current.y;
+    Serial.printf("# current_sense axis=%s ready=%u sync=%u raw=%d,%d volts=%.6f,%.6f pwm=%luHz adc=%luHz phase=%luHz pair_seq=%lu age=%luus skew=%luus stale=%lu rail=%lu reject=%lu errors=%lu/%u\n",
+                  axisIdName(command.axis),
+                  axis.current_sense_ready ? 1U : 0U,
+                  axis.sync_ready ? 1U : 0U,
+                  axis.raw_adc_a,
+                  axis.raw_adc_b,
+                  axis.raw_adc_a_v,
+                  axis.raw_adc_b_v,
+                  static_cast<unsigned long>(axis.pwm_event_hz),
+                  static_cast<unsigned long>(axis.adc_conversion_hz),
+                  static_cast<unsigned long>(axis.phase_sample_hz),
+                  static_cast<unsigned long>(axis.pair_sequence),
+                  static_cast<unsigned long>(axis.pair_age_us),
+                  static_cast<unsigned long>(axis.pair_skew_us),
+                  static_cast<unsigned long>(axis.adc_stale_count),
+                  static_cast<unsigned long>(axis.adc_rail_count),
+                  static_cast<unsigned long>(axis.adc_reject_count),
+                  static_cast<unsigned long>(axis.adc_read_errors),
+                  static_cast<unsigned int>(axis.adc_consecutive_errors));
+    Serial.printf("# current_cal valid=%u samples=%lu mean=%.1f,%.1f std=%.1f,%.1f minmax=%d:%d,%d:%d offsets=%.6f,%.6fV\n",
+                  axis.calibration_valid ? 1U : 0U,
+                  static_cast<unsigned long>(axis.calibration_samples),
+                  axis.calibration_mean_a_raw,
+                  axis.calibration_mean_b_raw,
+                  axis.calibration_stddev_a_raw,
+                  axis.calibration_stddev_b_raw,
+                  axis.calibration_min_a_raw,
+                  axis.calibration_max_a_raw,
+                  axis.calibration_min_b_raw,
+                  axis.calibration_max_b_raw,
+                  axis.offset_ia_v,
+                  axis.offset_ib_v);
 }
 
 void printCsvHeader() {
@@ -447,6 +502,24 @@ void handleCommand(char *line, SlaveVofaCommand &command) {
     printHelp();
 }
 
+void dispatchIoLine(char *line, SlaveVofaCommand &command) {
+    if (vofa_hardware_ready) {
+        handleCommand(line, command);
+        return;
+    }
+
+    lowerAscii(line);
+    char *save = nullptr;
+    char *root = strtok_r(line, " \t", &save);
+    char *action = strtok_r(nullptr, " \t", &save);
+    if (root != nullptr && strcmp(root, "vofa") == 0 &&
+        (action == nullptr || strcmp(action, "help") == 0)) {
+        printHelp();
+        return;
+    }
+    Serial.println("# VOFA hardware initialization in progress");
+}
+
 float triangleValue(uint32_t elapsed_us, uint32_t period_ms, float amplitude) {
     const uint32_t period_us = period_ms * 1000UL;
     const float phase =
@@ -492,6 +565,13 @@ void fillSample(const SlaveVofaCommand &command,
             sample.input = feedback.current_q_a;
             sample.output = feedback.voltage_q_v;
             break;
+        case SLAVE_VOFA_MODE_CURRENT_RAW:
+            sample.input = feedback.current_q_a;
+            sample.output = feedback.voltage_q_v;
+            sample.aux1 = feedback.raw_adc_a_v;
+            sample.aux2 = feedback.raw_adc_b_v;
+            sample.aux3 = feedback.current_d_a;
+            break;
         case SLAVE_VOFA_MODE_VELOCITY:
             sample.input = feedback.shaft_velocity_rad_s;
             sample.output = feedback.current_setpoint_a;
@@ -514,18 +594,25 @@ void fillSample(const SlaveVofaCommand &command,
 void runSlaveVofaTunerIoStep() {
     static char line[128] = {};
     static size_t line_length = 0;
+    static uint32_t last_rx_us = 0;
     static SlaveVofaCommand io_command = pending_command;
     static uint32_t last_print_ms = 0;
     static uint32_t last_sample_sequence = 0;
     static bool ready_printed = false;
+    static bool hardware_ready_printed = false;
 
     if (!ready_printed) {
-        Serial.printf("# VOFA tuner ready x=%u y=%u baud=115200\n",
+        Serial.printf("# VOFA io ready x=%u y=%u baud=115200 hardware=%u\n",
                       SLAVE_VOFA_TUNER_X_ENABLED ? 1U : 0U,
-                      SLAVE_VOFA_TUNER_Y_ENABLED ? 1U : 0U);
+                      SLAVE_VOFA_TUNER_Y_ENABLED ? 1U : 0U,
+                      vofa_hardware_ready ? 1U : 0U);
         printCsvHeader();
         printHelp();
         ready_printed = true;
+    }
+    if (vofa_hardware_ready && !hardware_ready_printed) {
+        Serial.println("# VOFA hardware ready");
+        hardware_ready_printed = true;
     }
 
     while (Serial.available() > 0) {
@@ -534,10 +621,10 @@ void runSlaveVofaTunerIoStep() {
             break;
         }
         const char ch = static_cast<char>(value);
-        if (ch == '\r' || ch == '\n') {
+        if (ch == '\r' || ch == '\n' || ch == ';') {
             if (line_length > 0) {
                 line[line_length] = '\0';
-                handleCommand(line, io_command);
+                dispatchIoLine(line, io_command);
                 line_length = 0;
                 line[0] = '\0';
             }
@@ -545,11 +632,19 @@ void runSlaveVofaTunerIoStep() {
         }
         if (line_length + 1U < sizeof(line)) {
             line[line_length++] = ch;
+            last_rx_us = micros();
         } else {
             line_length = 0;
             line[0] = '\0';
             Serial.println("# error: command too long");
         }
+    }
+    if (line_length > 0U &&
+        static_cast<uint32_t>(micros() - last_rx_us) >= 30000UL) {
+        line[line_length] = '\0';
+        dispatchIoLine(line, io_command);
+        line_length = 0;
+        line[0] = '\0';
     }
 
     const uint32_t now_ms = millis();
@@ -575,6 +670,10 @@ void runSlaveVofaTunerIoStep() {
                   sample.aux3);
     last_print_ms = now_ms;
     last_sample_sequence = sample.sequence;
+}
+
+void setSlaveVofaHardwareReady(bool ready) {
+    vofa_hardware_ready = ready;
 }
 
 bool runSlaveVofaTunerControlStep(float dt_s, SlaveControlStepTiming *timing) {
@@ -666,6 +765,10 @@ bool isSlaveVofaTunerRequestedOrActive() {
 #else
 
 void runSlaveVofaTunerIoStep() {}
+
+void setSlaveVofaHardwareReady(bool ready) {
+    (void)ready;
+}
 
 bool runSlaveVofaTunerControlStep(float dt_s, SlaveControlStepTiming *timing) {
     (void)dt_s;

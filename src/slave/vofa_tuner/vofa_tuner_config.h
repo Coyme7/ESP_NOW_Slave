@@ -6,7 +6,7 @@
 
 // VOFA+ FireWater 手动调参总开关。默认关闭，不创建任务，不接管串口和控制目标。
 #ifndef SLAVE_VOFA_TUNER_ENABLED
-#define SLAVE_VOFA_TUNER_ENABLED 0
+#define SLAVE_VOFA_TUNER_ENABLED 1
 #endif
 
 // 轴开关默认跟随真实闭环硬件能力，也可以通过 build_flags 单独覆盖。

@@ -94,6 +94,65 @@ DQCurrent_s dqCurrentFromLastSample(SlaveAdc1CurrentSense &current_sense,
     const ABCurrent_s ab_current = current_sense.getABCurrents(phase_current);
     return current_sense.getDQCurrents(ab_current, electrical_angle);
 }
+
+struct SlaveAdcRadioBaseline {
+    bool valid;
+    int raw_a;
+    int raw_b;
+};
+
+#if SLAVE_X_MOTOR_HW_ENABLED
+SlaveAdcRadioBaseline xCurrentSenseRadioBaseline = {};
+#endif
+#if SLAVE_Y_MOTOR_HW_ENABLED
+SlaveAdcRadioBaseline yCurrentSenseRadioBaseline = {};
+#endif
+
+void captureAxisCurrentSenseRadioBaseline(SlaveAdc1CurrentSense &current_sense,
+                                          bool current_sense_ready,
+                                          SlaveAdcRadioBaseline &baseline) {
+    baseline = {};
+    if (!current_sense_ready) {
+        return;
+    }
+    SlaveCurrentSenseRawPair pair = {};
+    baseline.valid = current_sense.snapshotRawPair(pair);
+    baseline.raw_a = pair.raw_a;
+    baseline.raw_b = pair.raw_b;
+}
+
+void logAxisCurrentSenseRadioFreezeProbe(const char *axis_name,
+                                         SlaveAdc1CurrentSense &current_sense,
+                                         bool current_sense_ready,
+                                         const SlaveAdcRadioBaseline &baseline) {
+    if (!current_sense_ready || !baseline.valid) {
+        Serial.printf("[Slave] adc_radio_probe axis=%s backend=%s ready=%u baseline=%u skipped=1\n",
+                      axis_name,
+                      current_sense.adcBackendName(),
+                      current_sense_ready ? 1 : 0,
+                      baseline.valid ? 1 : 0);
+        return;
+    }
+
+    SlaveCurrentSenseRawPair pair = {};
+    if (!current_sense.snapshotRawPair(pair)) {
+        Serial.printf("[Slave] adc_radio_probe axis=%s backend=%s ready=1 baseline=1 skipped=1\n",
+                      axis_name,
+                      current_sense.adcBackendName());
+        return;
+    }
+    Serial.printf("[Slave] adc_radio_probe axis=%s backend=%s ch=%u,%u before=%d,%d after=%d,%d adc_errors=%lu/%u\n",
+                  axis_name,
+                  current_sense.adcBackendName(),
+                  static_cast<unsigned int>(current_sense.channelA()),
+                  static_cast<unsigned int>(current_sense.channelB()),
+                  baseline.raw_a,
+                  baseline.raw_b,
+                  pair.raw_a,
+                  pair.raw_b,
+                  static_cast<unsigned long>(current_sense.readErrorCount()),
+                  static_cast<unsigned int>(current_sense.consecutiveReadErrors()));
+}
 #endif
 #endif
 
@@ -170,14 +229,22 @@ bool initSlaveMotorFocForAxis(const char *axis,
 #endif
 
 #if SLAVE_X_MOTOR_HW_ENABLED || SLAVE_Y_MOTOR_HW_ENABLED
+float slaveMotorRunVoltageLimit(const SlaveMotorFocConfig &config, bool open_loop) {
+    return open_loop
+               ? fminf(config.voltage.motor_limit_v, config.voltage.open_loop_limit_v)
+               : config.voltage.motor_limit_v;
+}
+
 void applySlaveMotorFocConfig(BLDCMotor &motor,
                               const SlaveMotorFocConfig &config,
-                              bool open_loop) {
+                              bool open_loop,
+                              bool startup_alignment) {
+    const float run_voltage_limit = slaveMotorRunVoltageLimit(config, open_loop);
+    const float active_voltage_limit =
+        startup_alignment ? fmaxf(run_voltage_limit, config.voltage.align_v)
+                          : run_voltage_limit;
     motor.voltage_sensor_align = config.voltage.align_v;
-    motor.voltage_limit = open_loop
-                              ? fminf(config.voltage.motor_limit_v,
-                                      config.voltage.open_loop_limit_v)
-                              : config.voltage.motor_limit_v;
+    motor.voltage_limit = active_voltage_limit;
     motor.velocity_limit = config.limit.velocity_rad_s;
     motor.current_limit = config.limit.current_a;
 
@@ -208,9 +275,9 @@ void applySlaveMotorFocConfig(BLDCMotor &motor,
     motor.PID_velocity.output_ramp = config.velocity.output_ramp;
     motor.PID_velocity.limit =
 #if SLAVE_ENABLE_CURRENT_SENSE
-        open_loop ? config.voltage.motor_limit_v : config.limit.current_a;
+        open_loop ? run_voltage_limit : config.limit.current_a;
 #else
-        config.voltage.motor_limit_v;
+        run_voltage_limit;
 #endif
     motor.LPF_velocity.Tf = config.filter.velocity_tf;
     motor.LPF_angle.Tf = config.filter.angle_tf;
@@ -219,14 +286,28 @@ void applySlaveMotorFocConfig(BLDCMotor &motor,
     motor.PID_current_q.I = config.current_loop.q.i;
     motor.PID_current_q.D = config.current_loop.q.d;
     motor.PID_current_q.output_ramp = config.current_loop.q.output_ramp;
-    motor.PID_current_q.limit = config.voltage.motor_limit_v;
+    motor.PID_current_q.limit = run_voltage_limit;
     motor.PID_current_d.P = config.current_loop.d.p;
     motor.PID_current_d.I = config.current_loop.d.i;
     motor.PID_current_d.D = config.current_loop.d.d;
     motor.PID_current_d.output_ramp = config.current_loop.d.output_ramp;
-    motor.PID_current_d.limit = config.voltage.motor_limit_v;
+    motor.PID_current_d.limit = run_voltage_limit;
     motor.LPF_current_q.Tf = config.current_loop.lpf_tf;
     motor.LPF_current_d.Tf = config.current_loop.lpf_tf;
+}
+
+void restoreSlaveMotorRunVoltageLimit(BLDCMotor &motor,
+                                      BLDCDriver3PWM &driver,
+                                      const SlaveMotorFocConfig &config,
+                                      bool open_loop) {
+    const float run_voltage_limit = slaveMotorRunVoltageLimit(config, open_loop);
+    driver.voltage_limit = run_voltage_limit;
+    motor.updateVoltageLimit(run_voltage_limit);
+#if SLAVE_ENABLE_CURRENT_SENSE
+    if (!open_loop) {
+        motor.PID_velocity.limit = config.limit.current_a;
+    }
+#endif
 }
 
 BLDCMotor *slaveMotorForAxis(AxisId axis) {
@@ -243,6 +324,23 @@ BLDCMotor *slaveMotorForAxis(AxisId axis) {
     return nullptr;
 #endif
 }
+
+#if SLAVE_ENABLE_CURRENT_SENSE
+SlaveAdc1CurrentSense *slaveCurrentSenseForAxis(AxisId axis) {
+    if (axis == AXIS_X) {
+#if SLAVE_X_MOTOR_HW_ENABLED
+        return xCurrentSenseReady ? &xCurrentSense : nullptr;
+#else
+        return nullptr;
+#endif
+    }
+#if SLAVE_Y_MOTOR_HW_ENABLED
+    return yCurrentSenseReady ? &yCurrentSense : nullptr;
+#else
+    return nullptr;
+#endif
+}
+#endif
 
 const SlaveMotorFocConfig &slaveMotorConfigForAxis(AxisId axis) {
     return axis == AXIS_X ? kSlaveXMotorFoc : kSlaveYMotorFoc;
@@ -274,8 +372,9 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
     current_sense.linkDriver(&driver);
     current_sense.skip_align = kSlaveCurrentSenseHardware.skip_align;
 #if SLAVE_BOOT_LOG_ENABLED
-    Serial.printf("[Slave] motor_diag axis=%s current_sense adc1 shunt=%.4fohm gain=%.2f pins=%d,%d raw_to_v=%.9f skip_align=%u\n",
+    Serial.printf("[Slave] motor_diag axis=%s current_sense backend=%s adc1 shunt=%.4fohm gain=%.2f pins=%d,%d raw_to_v=%.9f skip_align=%u\n",
                   axis_name,
+                  current_sense.adcBackendName(),
                   kSlaveCurrentSenseHardware.shunt_ohm,
                   kSlaveCurrentSenseHardware.gain,
                   current_pin_a,
@@ -303,7 +402,9 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
     current_sense.gain_a *= (current_gain_sign_a < 0) ? -1.0f : 1.0f;
     current_sense.gain_b *= (current_gain_sign_b < 0) ? -1.0f : 1.0f;
 #if SLAVE_BOOT_LOG_ENABLED
-    Serial.printf("[Slave] motor_diag axis=%s current_sense offsets ia=%.3fV ib=%.3fV gain_a=%.2f gain_b=%.2f sign_a=%d sign_b=%d raw_adc=%d,%d adc_errors=%lu\n",
+    SlaveCurrentSenseRawPair boot_pair = {};
+    (void)current_sense.snapshotRawPair(boot_pair);
+    Serial.printf("[Slave] motor_diag axis=%s current_sense offsets ia=%.3fV ib=%.3fV gain_a=%.2f gain_b=%.2f sign_a=%d sign_b=%d ch=%u,%u raw_adc=%d,%d adc_errors=%lu\n",
                   axis_name,
                   current_sense.offset_ia,
                   current_sense.offset_ib,
@@ -311,8 +412,10 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
                   current_sense.gain_b,
                   current_gain_sign_a,
                   current_gain_sign_b,
-                  current_sense.readRawA(),
-                  current_sense.readRawB(),
+                  static_cast<unsigned int>(current_sense.channelA()),
+                  static_cast<unsigned int>(current_sense.channelB()),
+                  boot_pair.raw_a,
+                  boot_pair.raw_b,
                   static_cast<unsigned long>(current_sense.readErrorCount()));
 #endif
     if (current_sense.readErrorCount() != 0U) {
@@ -361,7 +464,7 @@ bool initSlaveYMotorHardware(bool open_loop) {
     }
 #endif
     yMotor.linkDriver(&yDriver);
-    applySlaveMotorFocConfig(yMotor, kSlaveYMotorFoc, open_loop);
+    applySlaveMotorFocConfig(yMotor, kSlaveYMotorFoc, open_loop, !open_loop);
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.printf("[Slave] motor_diag axis=Y torque_controller=%s current_limit=%.3fA vlim=%.2fV align=%.2fV pp=%u\n",
                   slaveTorqueControllerName(open_loop),
@@ -402,6 +505,24 @@ bool initSlaveYMotorHardware(bool open_loop) {
                                   SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD)) {
         return false;
     }
+    restoreSlaveMotorRunVoltageLimit(yMotor, yDriver, kSlaveYMotorFoc, false);
+#if SLAVE_ENABLE_CURRENT_SENSE && SLAVE_Y_SENSOR_HW_ENABLED
+    SlaveMotorDiagnosticsContext runtime_diagnostics = {
+        "Y",
+        yMotor,
+        yDriver,
+        yCurrentSense,
+        ySensor,
+        kSlaveYMotorFoc,
+    };
+    if (!verifySlaveCurrentSenseRuntimeBaseline(runtime_diagnostics,
+                                                "pre_radio",
+                                                false)) {
+        yCurrentSenseReady = false;
+        markSlaveMotorInitFault(yDriver);
+        return false;
+    }
+#endif
     yMotorReady = true;
     return true;
 }
@@ -478,7 +599,7 @@ bool setupSlaveXMotorHardware() {
 
     xMotor.linkSensor(&xSensor);
     xMotor.linkDriver(&xDriver);
-    applySlaveMotorFocConfig(xMotor, kSlaveXMotorFoc, false);
+    applySlaveMotorFocConfig(xMotor, kSlaveXMotorFoc, false, true);
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.printf("[Slave] motor_diag axis=X torque_controller=%s current_limit=%.3fA vlim=%.2fV align=%.2fV pp=%u\n",
                   slaveTorqueControllerName(false),
@@ -512,6 +633,24 @@ bool setupSlaveXMotorHardware() {
                                   SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD)) {
         return false;
     }
+    restoreSlaveMotorRunVoltageLimit(xMotor, xDriver, kSlaveXMotorFoc, false);
+#if SLAVE_ENABLE_CURRENT_SENSE
+    SlaveMotorDiagnosticsContext runtime_diagnostics = {
+        "X",
+        xMotor,
+        xDriver,
+        xCurrentSense,
+        xSensor,
+        kSlaveXMotorFoc,
+    };
+    if (!verifySlaveCurrentSenseRuntimeBaseline(runtime_diagnostics,
+                                                "pre_radio",
+                                                false)) {
+        xCurrentSenseReady = false;
+        markSlaveMotorInitFault(xDriver);
+        return false;
+    }
+#endif
     xMotorReady = true;
     return true;
 #else
@@ -553,6 +692,87 @@ bool setupSlaveYMotorClosedLoopHardware() {
 #else
     addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
     return false;
+#endif
+}
+
+void captureSlaveCurrentSenseRadioBaseline() {
+#if SLAVE_ENABLE_CURRENT_SENSE
+#if SLAVE_X_MOTOR_HW_ENABLED
+    captureAxisCurrentSenseRadioBaseline(xCurrentSense,
+                                         xCurrentSenseReady,
+                                         xCurrentSenseRadioBaseline);
+#endif
+#if SLAVE_Y_MOTOR_HW_ENABLED
+    captureAxisCurrentSenseRadioBaseline(yCurrentSense,
+                                         yCurrentSenseReady,
+                                         yCurrentSenseRadioBaseline);
+#endif
+#endif
+}
+
+void logSlaveCurrentSenseRadioFreezeProbe() {
+#if SLAVE_ENABLE_CURRENT_SENSE
+#if SLAVE_X_MOTOR_HW_ENABLED
+    logAxisCurrentSenseRadioFreezeProbe("X",
+                                        xCurrentSense,
+                                        xCurrentSenseReady,
+                                        xCurrentSenseRadioBaseline);
+#endif
+#if SLAVE_Y_MOTOR_HW_ENABLED
+    logAxisCurrentSenseRadioFreezeProbe("Y",
+                                        yCurrentSense,
+                                        yCurrentSenseReady,
+                                        yCurrentSenseRadioBaseline);
+#endif
+#endif
+}
+
+bool finalizeSlaveCurrentSenseRuntimeValidation() {
+#if SLAVE_ENABLE_CURRENT_SENSE
+    bool all_ready = true;
+#if SLAVE_X_MOTOR_HW_ENABLED && SLAVE_X_SENSOR_HW_ENABLED
+    if (xMotorReady && xCurrentSenseReady) {
+        SlaveMotorDiagnosticsContext context = {
+            "X",
+            xMotor,
+            xDriver,
+            xCurrentSense,
+            xSensor,
+            kSlaveXMotorFoc,
+        };
+        if (!verifySlaveCurrentSenseRuntimeBaseline(context,
+                                                    "post_radio",
+                                                    true)) {
+            xCurrentSenseReady = false;
+            xMotorReady = false;
+            markSlaveMotorInitFault(xDriver);
+            all_ready = false;
+        }
+    }
+#endif
+#if SLAVE_Y_MOTOR_HW_ENABLED && SLAVE_Y_SENSOR_HW_ENABLED
+    if (yMotorReady && yCurrentSenseReady) {
+        SlaveMotorDiagnosticsContext context = {
+            "Y",
+            yMotor,
+            yDriver,
+            yCurrentSense,
+            ySensor,
+            kSlaveYMotorFoc,
+        };
+        if (!verifySlaveCurrentSenseRuntimeBaseline(context,
+                                                    "post_radio",
+                                                    true)) {
+            yCurrentSenseReady = false;
+            yMotorReady = false;
+            markSlaveMotorInitFault(yDriver);
+            all_ready = false;
+        }
+    }
+#endif
+    return all_ready;
+#else
+    return true;
 #endif
 }
 
@@ -869,10 +1089,39 @@ SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent() {
     snapshot.x.voltage_d_v = xMotor.voltage.d;
 #if SLAVE_ENABLE_CURRENT_SENSE
     snapshot.x.current_sense_ready = xCurrentSenseReady;
-    snapshot.x.raw_adc_a = xCurrentSense.lastRawA();
-    snapshot.x.raw_adc_b = xCurrentSense.lastRawB();
-    snapshot.x.adc_read_errors = xCurrentSense.readErrorCount();
-    snapshot.x.adc_consecutive_errors = xCurrentSense.consecutiveReadErrors();
+    SlaveCurrentSenseRawPair x_pair = {};
+    (void)xCurrentSense.snapshotRawPair(x_pair);
+    snapshot.x.raw_adc_a = x_pair.raw_a;
+    snapshot.x.raw_adc_b = x_pair.raw_b;
+    snapshot.x.raw_adc_a_v =
+        static_cast<float>(snapshot.x.raw_adc_a) *
+        kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+    snapshot.x.raw_adc_b_v =
+        static_cast<float>(snapshot.x.raw_adc_b) *
+        kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+    const SlaveCurrentSenseSyncStats x_sync = xCurrentSense.syncStats();
+    snapshot.x.sync_ready = x_sync.sync_ready;
+    snapshot.x.pwm_event_hz = x_sync.pwm_event_hz;
+    snapshot.x.adc_conversion_hz = x_sync.adc_conversion_hz;
+    snapshot.x.phase_sample_hz = x_sync.phase_sample_hz;
+    snapshot.x.pair_sequence = x_sync.pair_sequence;
+    snapshot.x.pair_age_us = x_sync.pair_age_us;
+    snapshot.x.pair_skew_us = x_sync.pair_skew_us;
+    snapshot.x.adc_read_errors = x_sync.adc_read_errors;
+    snapshot.x.adc_consecutive_errors = x_sync.consecutive_errors;
+    snapshot.x.adc_stale_count = x_sync.stale_count;
+    snapshot.x.adc_rail_count = x_sync.rail_count;
+    snapshot.x.adc_reject_count = x_sync.reject_count;
+    snapshot.x.calibration_valid = x_sync.calibration.valid;
+    snapshot.x.calibration_samples = x_sync.calibration.samples;
+    snapshot.x.calibration_mean_a_raw = x_sync.calibration.mean_a_raw;
+    snapshot.x.calibration_mean_b_raw = x_sync.calibration.mean_b_raw;
+    snapshot.x.calibration_stddev_a_raw = x_sync.calibration.stddev_a_raw;
+    snapshot.x.calibration_stddev_b_raw = x_sync.calibration.stddev_b_raw;
+    snapshot.x.calibration_min_a_raw = x_sync.calibration.min_a_raw;
+    snapshot.x.calibration_max_a_raw = x_sync.calibration.max_a_raw;
+    snapshot.x.calibration_min_b_raw = x_sync.calibration.min_b_raw;
+    snapshot.x.calibration_max_b_raw = x_sync.calibration.max_b_raw;
     snapshot.x.offset_ia_v = xCurrentSense.offset_ia;
     snapshot.x.offset_ib_v = xCurrentSense.offset_ib;
 #endif
@@ -894,10 +1143,39 @@ SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent() {
     snapshot.y.voltage_d_v = yMotor.voltage.d;
 #if SLAVE_ENABLE_CURRENT_SENSE
     snapshot.y.current_sense_ready = yCurrentSenseReady;
-    snapshot.y.raw_adc_a = yCurrentSense.lastRawA();
-    snapshot.y.raw_adc_b = yCurrentSense.lastRawB();
-    snapshot.y.adc_read_errors = yCurrentSense.readErrorCount();
-    snapshot.y.adc_consecutive_errors = yCurrentSense.consecutiveReadErrors();
+    SlaveCurrentSenseRawPair y_pair = {};
+    (void)yCurrentSense.snapshotRawPair(y_pair);
+    snapshot.y.raw_adc_a = y_pair.raw_a;
+    snapshot.y.raw_adc_b = y_pair.raw_b;
+    snapshot.y.raw_adc_a_v =
+        static_cast<float>(snapshot.y.raw_adc_a) *
+        kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+    snapshot.y.raw_adc_b_v =
+        static_cast<float>(snapshot.y.raw_adc_b) *
+        kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+    const SlaveCurrentSenseSyncStats y_sync = yCurrentSense.syncStats();
+    snapshot.y.sync_ready = y_sync.sync_ready;
+    snapshot.y.pwm_event_hz = y_sync.pwm_event_hz;
+    snapshot.y.adc_conversion_hz = y_sync.adc_conversion_hz;
+    snapshot.y.phase_sample_hz = y_sync.phase_sample_hz;
+    snapshot.y.pair_sequence = y_sync.pair_sequence;
+    snapshot.y.pair_age_us = y_sync.pair_age_us;
+    snapshot.y.pair_skew_us = y_sync.pair_skew_us;
+    snapshot.y.adc_read_errors = y_sync.adc_read_errors;
+    snapshot.y.adc_consecutive_errors = y_sync.consecutive_errors;
+    snapshot.y.adc_stale_count = y_sync.stale_count;
+    snapshot.y.adc_rail_count = y_sync.rail_count;
+    snapshot.y.adc_reject_count = y_sync.reject_count;
+    snapshot.y.calibration_valid = y_sync.calibration.valid;
+    snapshot.y.calibration_samples = y_sync.calibration.samples;
+    snapshot.y.calibration_mean_a_raw = y_sync.calibration.mean_a_raw;
+    snapshot.y.calibration_mean_b_raw = y_sync.calibration.mean_b_raw;
+    snapshot.y.calibration_stddev_a_raw = y_sync.calibration.stddev_a_raw;
+    snapshot.y.calibration_stddev_b_raw = y_sync.calibration.stddev_b_raw;
+    snapshot.y.calibration_min_a_raw = y_sync.calibration.min_a_raw;
+    snapshot.y.calibration_max_a_raw = y_sync.calibration.max_a_raw;
+    snapshot.y.calibration_min_b_raw = y_sync.calibration.min_b_raw;
+    snapshot.y.calibration_max_b_raw = y_sync.calibration.max_b_raw;
     snapshot.y.offset_ia_v = yCurrentSense.offset_ia;
     snapshot.y.offset_ib_v = yCurrentSense.offset_ib;
 #endif
@@ -920,7 +1198,7 @@ bool configureSlaveMotorTuning(AxisId axis,
     }
 
     const SlaveMotorFocConfig &config = slaveMotorConfigForAxis(axis);
-    applySlaveMotorFocConfig(*motor, config, false);
+    applySlaveMotorFocConfig(*motor, config, false, false);
     motor->current_limit = fminf(current_limit_a, config.limit.current_a);
     motor->voltage_limit = fminf(voltage_limit_v, config.voltage.motor_limit_v);
     motor->velocity_limit = fminf(velocity_limit_rad_s, config.limit.velocity_rad_s);
@@ -982,7 +1260,7 @@ void restoreSlaveMotorTuning(AxisId axis) {
     if (motor == nullptr) {
         return;
     }
-    applySlaveMotorFocConfig(*motor, slaveMotorConfigForAxis(axis), false);
+    applySlaveMotorFocConfig(*motor, slaveMotorConfigForAxis(axis), false, false);
     motor->PID_current_q.reset();
     motor->PID_current_d.reset();
     motor->PID_velocity.reset();
@@ -1011,6 +1289,20 @@ SlaveMotorTuningFeedback snapshotSlaveMotorTuning(AxisId axis) {
     feedback.current_setpoint_a = motor->current_sp;
     feedback.velocity_setpoint_rad_s = motor->shaft_velocity_sp;
     feedback.angle_setpoint_rad = motor->shaft_angle_sp;
+#if SLAVE_ENABLE_CURRENT_SENSE
+    SlaveAdc1CurrentSense *current_sense = slaveCurrentSenseForAxis(axis);
+    if (current_sense != nullptr) {
+        SlaveCurrentSenseRawPair pair = {};
+        if (current_sense->snapshotRawPair(pair)) {
+            feedback.raw_adc_a_v =
+                static_cast<float>(pair.raw_a) *
+                kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+            feedback.raw_adc_b_v =
+                static_cast<float>(pair.raw_b) *
+                kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
+        }
+    }
+#endif
 #else
     (void)axis;
 #endif

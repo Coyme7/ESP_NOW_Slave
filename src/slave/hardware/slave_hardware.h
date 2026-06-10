@@ -16,8 +16,30 @@ struct SlaveMotorCurrentAxisSnapshot {
     bool current_sense_ready;
     int raw_adc_a;
     int raw_adc_b;
+    float raw_adc_a_v;
+    float raw_adc_b_v;
+    bool sync_ready;
+    uint32_t pwm_event_hz;
+    uint32_t adc_conversion_hz;
+    uint32_t phase_sample_hz;
+    uint32_t pair_sequence;
+    uint32_t pair_age_us;
+    uint32_t pair_skew_us;
     uint32_t adc_read_errors;
     uint16_t adc_consecutive_errors;
+    uint32_t adc_stale_count;
+    uint32_t adc_rail_count;
+    uint32_t adc_reject_count;
+    bool calibration_valid;
+    uint32_t calibration_samples;
+    float calibration_mean_a_raw;
+    float calibration_mean_b_raw;
+    float calibration_stddev_a_raw;
+    float calibration_stddev_b_raw;
+    int calibration_min_a_raw;
+    int calibration_max_a_raw;
+    int calibration_min_b_raw;
+    int calibration_max_b_raw;
     float offset_ia_v;
     float offset_ib_v;
     float current_q_a;
@@ -48,6 +70,8 @@ struct SlaveMotorTuningFeedback {
     float current_setpoint_a;
     float velocity_setpoint_rad_s;
     float angle_setpoint_rad;
+    float raw_adc_a_v;
+    float raw_adc_b_v;
 };
 
 // 设置紫光 MOS 输出；只允许安全任务调用。
@@ -62,6 +86,10 @@ bool setupSlaveXMotorHardware();
 bool setupSlaveYSensorHardware();
 bool setupSlaveYMotorOpenLoopHardware();
 bool setupSlaveYMotorClosedLoopHardware();
+
+void captureSlaveCurrentSenseRadioBaseline();
+void logSlaveCurrentSenseRadioFreezeProbe();
+bool finalizeSlaveCurrentSenseRuntimeValidation();
 
 bool sampleSlaveYSensorForStatus(float *angle_rad, uint16_t *raw_angle);
 SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent();

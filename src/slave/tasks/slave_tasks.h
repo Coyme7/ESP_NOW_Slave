@@ -6,7 +6,10 @@
 // 职责：集中从机 FreeRTOS task loop 和任务创建。
 // Core 1 只跑控制热路径；Core 0 处理通信、紫光安全和状态输出。
 
-// 创建并启动从机所有任务。调用前必须已经完成安全输出、硬件初始化和 ESP-NOW 初始化。
+// 提前启动 VOFA 串口任务，使硬件初始化期间也能返回诊断状态。重复调用安全。
+bool startSlaveVofaTunerTask();
+
+// 创建并启动从机其余任务。调用前必须已经完成安全输出、硬件初始化和 ESP-NOW 初始化。
 void startSlaveTasks();
 
 struct SlaveControlHealthSnapshot {

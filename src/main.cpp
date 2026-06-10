@@ -8,6 +8,7 @@
 #include "slave/modes/mode_manager.h"
 #include "slave/modes/mode_table.h"
 #include "slave/tasks/slave_tasks.h"
+#include "slave/vofa_tuner/vofa_tuner.h"
 
 namespace {
 
@@ -70,9 +71,12 @@ extern "C" void app_main() {
     initArduino();
     Serial.begin(115200);
 
-    // 上电先关闭 UV 和电机使能，再按 SLAVE_RUN_MODE 初始化所需硬件。
     configureSlaveSafeOutputs();
+#if SLAVE_VOFA_TUNER_ENABLED
+    (void)startSlaveVofaTunerTask();
+#endif
     const SlaveHardwareBootState hw = setupSlaveHardwareForRunMode();
+    captureSlaveCurrentSenseRadioBaseline();
 #if !SLAVE_BOOT_LOG_ENABLED
     (void)hw;
 #endif
@@ -81,11 +85,23 @@ extern "C" void app_main() {
     setupSlaveEspNow();
 #if SLAVE_BOOT_LOG_ENABLED
     printSlaveEspNowIdentity();
+    logSlaveCurrentSenseRadioFreezeProbe();
 #endif
 #else
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.println("[Slave] espnow disabled for local motion/uv test");
+    logSlaveCurrentSenseRadioFreezeProbe();
 #endif
+#endif
+
+    const bool current_sense_runtime_ready =
+        finalizeSlaveCurrentSenseRuntimeValidation();
+#if !SLAVE_BOOT_LOG_ENABLED
+    (void)current_sense_runtime_ready;
+#else
+    if (!current_sense_runtime_ready) {
+        Serial.println("[Slave] current_sense runtime validation failed");
+    }
 #endif
 
 #if SLAVE_BOOT_LOG_ENABLED
@@ -159,7 +175,7 @@ extern "C" void app_main() {
                   kSlaveYMotorFoc.position.i,
                   kSlaveYMotorFoc.position.d,
                   kSlaveYAxis.geometry.throw_distance_mm);
-    Serial.printf("    current_sense=%u zero_test=%u diag_test=%u shunt=%.4fohm gain=%.1f lpf=%.4fs\n",
+    Serial.printf("    current_sense=%u adc_backend=mcpwm_sync_fast zero_test=%u diag_test=%u shunt=%.4fohm gain=%.1f lpf=%.4fs\n",
                   SLAVE_ENABLE_CURRENT_SENSE ? 1 : 0,
                   SLAVE_ENABLE_ZERO_CURRENT_TEST ? 1 : 0,
                   SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST ? 1 : 0,
@@ -174,5 +190,8 @@ extern "C" void app_main() {
                   static_cast<float>(SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD));
 #endif
 
+#if SLAVE_VOFA_TUNER_ENABLED
+    setSlaveVofaHardwareReady(true);
+#endif
     startSlaveTasks();
 }

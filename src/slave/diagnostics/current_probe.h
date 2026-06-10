@@ -20,5 +20,11 @@ struct SlaveMotorDiagnosticsContext {
 // 在驱动 EN/PWM 已进入运行态偏置后校准 ADC offset，保持原始电流采样公式不变。
 bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context);
 
+// 在指定启动阶段复核运行态中心零矢量基线；仅最终阶段通过后武装采样故障监控。
+bool verifySlaveCurrentSenseRuntimeBaseline(
+    SlaveMotorDiagnosticsContext &context,
+    const char *stage,
+    bool arm_runtime_validation);
+
 // U/V/W 单相注入诊断，只在 SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST 下由启动流程调用。
 void runSlaveCurrentSenseProbe(SlaveMotorDiagnosticsContext &context);
