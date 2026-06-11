@@ -14,13 +14,10 @@ static_assert(sizeof(MasterCommandPacket) <= 250, "ESP-NOW v1 payload limit exce
 static_assert(sizeof(TrajectorySegmentPacket) <= 250, "ESP-NOW v1 payload limit exceeded");
 static_assert(sizeof(SlaveTelemetryPacket) <= 250, "ESP-NOW v1 payload limit exceeded");
 
-static_assert(SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_5KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_5KHZ_ID ||
+static_assert(SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_X_4KHZ_ID ||
+                  SLAVE_RUN_MODE == SLAVE_MODE_SINGLE_Y_4KHZ_ID ||
                   SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_4KHZ_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_YSENSOR_ONLY_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_Y_OPEN_LOOP_ID ||
-                  SLAVE_RUN_MODE == SLAVE_MODE_Y_CLOSED_LOOP_ID,
+                  SLAVE_RUN_MODE == SLAVE_MODE_DUAL_XY_DRY_RUN_ID,
               "invalid SLAVE_RUN_MODE");
 
 static_assert(SLAVE_STARTUP_APP_MODE == SLAVE_STARTUP_APP_MANUAL_DRAW_ID ||
@@ -66,7 +63,6 @@ static_assert(!(slaveRunModeNeedsMotorHardware(AXIS_X) &&
                 !SLAVE_X_SENSOR_HW_ENABLED),
               "X motor output requires X sensor hardware");
 static_assert(!(slaveRunModeNeedsMotorHardware(AXIS_Y) &&
-                !slaveRunModeUsesOpenLoopMotor(AXIS_Y) &&
                 SLAVE_Y_MOTOR_HW_ENABLED &&
                 !SLAVE_Y_SENSOR_HW_ENABLED),
               "Y closed-loop motor output requires Y sensor hardware");

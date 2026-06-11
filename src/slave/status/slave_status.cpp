@@ -9,6 +9,7 @@
 #include "slave/config/slave_config.h"
 #include "slave/control/slave_coordinate_mapper.h"
 #include "slave/control/slave_motion.h"
+#include "slave/hardware/slave_adc1_dma_sampler.h"
 #include "slave/hardware/slave_hardware.h"
 #include "slave/modes/mode_guard.h"
 #include "slave/modes/mode_manager.h"
@@ -198,6 +199,21 @@ void printSlaveCurrentDiag() {
                   kSlaveXMotorFoc.current_loop.d.p,
                   kSlaveYMotorFoc.current_loop.d.p,
                   kSlaveXMotorFoc.current_loop.lpf_tf);
+    const SlaveAdc1DmaHealthSnapshot adc_health = snapshotSlaveAdc1DmaHealth();
+    Serial.printf("  adc_dma: required=%u started=%u first=%u fault=%u seq=%lu invalid=%lu samples=%lu read_err=%lu timeout=%lu overflow=%lu stale=%lu consumer=%lu/%luus\n",
+                  adc_health.required ? 1 : 0,
+                  adc_health.started ? 1 : 0,
+                  adc_health.first_frame_ready ? 1 : 0,
+                  adc_health.fault_latched ? 1 : 0,
+                  static_cast<unsigned long>(adc_health.frame_sequence),
+                  static_cast<unsigned long>(adc_health.invalid_frames),
+                  static_cast<unsigned long>(adc_health.invalid_samples),
+                  static_cast<unsigned long>(adc_health.read_errors),
+                  static_cast<unsigned long>(adc_health.read_timeouts),
+                  static_cast<unsigned long>(adc_health.pool_overflows),
+                  static_cast<unsigned long>(adc_health.stale_control_cycles),
+                  static_cast<unsigned long>(adc_health.consumer_last_us),
+                  static_cast<unsigned long>(adc_health.consumer_max_us));
     Serial.printf("  x: motor=%u sense=%u raw=%d,%d adc_err=%lu/%u offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
                   current.x.motor_ready ? 1 : 0,
                   current.x.current_sense_ready ? 1 : 0,
@@ -330,6 +346,14 @@ void printSlaveStatusLine() {
     const uint16_t active_faults = getActiveFaultFlags();
     const uint16_t latched_faults = getLatchedFaultFlags();
 
+    float x_sensor_angle_rad = 0.0f;
+    uint16_t x_sensor_raw = 0;
+#if SLAVE_STATUS_X_SENSOR_BRINGUP_LOG_ENABLED
+    const bool x_sensor_sampled = sampleSlaveXSensorForStatus(&x_sensor_angle_rad, &x_sensor_raw);
+#else
+    const bool x_sensor_sampled = false;
+#endif
+
     float y_sensor_angle_rad = 0.0f;
     uint16_t y_sensor_raw = 0;
 #if SLAVE_STATUS_Y_SENSOR_BRINGUP_LOG_ENABLED
@@ -425,6 +449,21 @@ void printSlaveStatusLine() {
                   SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST ? 1 : 0,
                   kSlaveCurrentSenseHardware.shunt_ohm,
                   kSlaveCurrentSenseHardware.gain);
+    const SlaveAdc1DmaHealthSnapshot adc_health = snapshotSlaveAdc1DmaHealth();
+    Serial.printf("    adc_dma: required=%u started=%u first=%u fault=%u seq=%lu invalid=%lu samples=%lu read_err=%lu timeout=%lu overflow=%lu stale=%lu consumer=%lu/%luus\n",
+                  adc_health.required ? 1 : 0,
+                  adc_health.started ? 1 : 0,
+                  adc_health.first_frame_ready ? 1 : 0,
+                  adc_health.fault_latched ? 1 : 0,
+                  static_cast<unsigned long>(adc_health.frame_sequence),
+                  static_cast<unsigned long>(adc_health.invalid_frames),
+                  static_cast<unsigned long>(adc_health.invalid_samples),
+                  static_cast<unsigned long>(adc_health.read_errors),
+                  static_cast<unsigned long>(adc_health.read_timeouts),
+                  static_cast<unsigned long>(adc_health.pool_overflows),
+                  static_cast<unsigned long>(adc_health.stale_control_cycles),
+                  static_cast<unsigned long>(adc_health.consumer_last_us),
+                  static_cast<unsigned long>(adc_health.consumer_max_us));
     Serial.printf("    x: motor=%u sense=%u raw=%d,%d adc_err=%lu/%u offset=%.4f/%.4fV iq/id=%.4f/%.4fA vq/vd=%.3f/%.3fV\n",
                   current.x.motor_ready ? 1 : 0,
                   current.x.current_sense_ready ? 1 : 0,
@@ -460,7 +499,7 @@ void printSlaveStatusLine() {
                   command.x_norm,
                   command.y_norm,
                   command_fresh ? 1 : 0);
-    Serial.printf("  x: cmd=%.2fmm smooth=%.2fmm target=%.4frad actual=%.4frad track=%.1fmrad total=%.2fmm limit=%u clamp=%u\n",
+    Serial.printf("  x: cmd=%.2fmm smooth=%.2fmm target=%.4frad actual=%.4frad track=%.1fmrad total=%.2fmm limit=%u clamp=%u raw=%u sample=%.4frad/%u\n",
                   motion.target_x_mm,
                   motion.smooth_x_mm,
                   motion.target_angle_rad,
@@ -468,7 +507,10 @@ void printSlaveStatusLine() {
                   motion.x_track_err_mrad,
                   x_total_err_mm,
                   motion.x_limit ? 1 : 0,
-                  motion.x_clamped ? 1 : 0);
+                  motion.x_clamped ? 1 : 0,
+                  static_cast<unsigned int>(x_sensor_raw),
+                  x_sensor_angle_rad,
+                  x_sensor_sampled ? 1 : 0);
     Serial.printf("  y: cmd=%.2fmm smooth=%.2fmm target=%.4frad actual=%.4frad track=%.1fmrad total=%.2fmm limit=%u clamp=%u raw=%u sample=%.4frad/%u\n",
                   motion.target_y_mm,
                   motion.smooth_y_mm,

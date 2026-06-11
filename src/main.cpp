@@ -1,8 +1,10 @@
 #include <Arduino.h>
 
+#include "common/system_state.h"
 #include "common/timing/link_timing.h"
 #include "slave/comm/slave_transport.h"
 #include "slave/config/slave_config.h"
+#include "slave/hardware/slave_adc1_dma_sampler.h"
 #include "slave/hardware/slave_hardware.h"
 #include "slave/modes/mode_traits.h"
 #include "slave/modes/mode_manager.h"
@@ -20,20 +22,14 @@ struct SlaveHardwareBootState {
 
 __attribute__((unused)) const char *slaveRunPathName() {
     switch (SLAVE_RUN_MODE) {
-        case SLAVE_MODE_SINGLE_X_5KHZ_ID:
+        case SLAVE_MODE_SINGLE_X_4KHZ_ID:
             return "x_closed_loop";
-        case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
+        case SLAVE_MODE_SINGLE_Y_4KHZ_ID:
             return "y_closed_loop";
         case SLAVE_MODE_DUAL_XY_4KHZ_ID:
             return "dual_xy_closed_loop";
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             return "dual_xy_dry_run";
-        case SLAVE_MODE_YSENSOR_ONLY_ID:
-            return "y_sensor_only";
-        case SLAVE_MODE_Y_OPEN_LOOP_ID:
-            return "y_open_loop";
-        case SLAVE_MODE_Y_CLOSED_LOOP_ID:
-            return "y_closed_loop";
         default:
             return "unknown";
     }
@@ -54,11 +50,8 @@ SlaveHardwareBootState setupSlaveHardwareForRunMode() {
         state.y_sensor_ready = setupSlaveYSensorHardware();
     }
     if (slaveRunModeNeedsMotorHardware(AXIS_Y)) {
-        state.y_motor_ready = slaveRunModeUsesOpenLoopMotor(AXIS_Y)
-                                  ? setupSlaveYMotorOpenLoopHardware()
-                                  : setupSlaveYMotorClosedLoopHardware();
-        state.y_sensor_ready = state.y_sensor_ready || (!slaveRunModeUsesOpenLoopMotor(AXIS_Y) &&
-                                                        state.y_motor_ready);
+        state.y_motor_ready = setupSlaveYMotorClosedLoopHardware();
+        state.y_sensor_ready = state.y_sensor_ready || state.y_motor_ready;
     }
 
     return state;
@@ -72,9 +65,19 @@ extern "C" void app_main() {
 
     // 上电先关闭 UV 和电机使能，再按 SLAVE_RUN_MODE 初始化所需硬件。
     configureSlaveSafeOutputs();
-    const SlaveHardwareBootState hw = setupSlaveHardwareForRunMode();
+    const bool adc_dma_started = startSlaveAdc1DmaSampler();
+    const bool adc_dma_ready =
+        adc_dma_started && waitForSlaveAdc1DmaFirstFrame(100U);
+    if (!adc_dma_ready && slaveAdc1DmaSamplerRequired()) {
+        setUvOutput(false);
+        addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+    }
+    const SlaveHardwareBootState hw =
+        adc_dma_ready ? setupSlaveHardwareForRunMode() : SlaveHardwareBootState{};
 #if !SLAVE_BOOT_LOG_ENABLED
     (void)hw;
+    (void)adc_dma_started;
+    (void)adc_dma_ready;
 #endif
 
 #if SLAVE_ESPNOW_ENABLED
@@ -166,6 +169,15 @@ extern "C" void app_main() {
                   kSlaveCurrentSenseHardware.shunt_ohm,
                   kSlaveCurrentSenseHardware.gain,
                   kSlaveXMotorFoc.current_loop.lpf_tf);
+    const SlaveAdc1DmaHealthSnapshot adc_health = snapshotSlaveAdc1DmaHealth();
+    Serial.printf("    adc_dma required=%u started=%u first=%u seq=%lu invalid=%lu overflow=%lu stale=%lu\n",
+                  adc_health.required ? 1 : 0,
+                  adc_health.started ? 1 : 0,
+                  adc_health.first_frame_ready ? 1 : 0,
+                  static_cast<unsigned long>(adc_health.frame_sequence),
+                  static_cast<unsigned long>(adc_health.invalid_frames),
+                  static_cast<unsigned long>(adc_health.pool_overflows),
+                  static_cast<unsigned long>(adc_health.stale_control_cycles));
     Serial.printf("    foc_startup_skip=%u x_dir=%d x_zero=%.6frad y_dir=%d y_zero=%.6frad\n",
                   SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP ? 1 : 0,
                   static_cast<int>(SLAVE_X_FOC_SENSOR_DIRECTION),

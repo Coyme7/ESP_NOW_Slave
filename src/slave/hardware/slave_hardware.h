@@ -60,9 +60,10 @@ void configureSlaveSafeOutputs();
 bool setupSlaveXSensorHardware();
 bool setupSlaveXMotorHardware();
 bool setupSlaveYSensorHardware();
-bool setupSlaveYMotorOpenLoopHardware();
 bool setupSlaveYMotorClosedLoopHardware();
+void disableSlaveMotorOutputsForAdcFault();
 
+bool sampleSlaveXSensorForStatus(float *angle_rad, uint16_t *raw_angle);
 bool sampleSlaveYSensorForStatus(float *angle_rad, uint16_t *raw_angle);
 SlaveMotorCurrentSnapshot snapshotSlaveMotorCurrent();
 bool configureSlaveMotorTuning(AxisId axis,

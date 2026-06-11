@@ -9,20 +9,14 @@
 
 const char *slaveRunModeName() {
     switch (SLAVE_RUN_MODE) {
-        case SLAVE_MODE_SINGLE_X_5KHZ_ID:
-            return "SingleX_5kHz";
-        case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
-            return "SingleY_5kHz";
+        case SLAVE_MODE_SINGLE_X_4KHZ_ID:
+            return "SingleX_4kHz";
+        case SLAVE_MODE_SINGLE_Y_4KHZ_ID:
+            return "SingleY_4kHz";
         case SLAVE_MODE_DUAL_XY_4KHZ_ID:
             return "DualXY_4kHz";
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             return "DualXY_DryRun";
-        case SLAVE_MODE_YSENSOR_ONLY_ID:
-            return "YSensorOnly";
-        case SLAVE_MODE_Y_OPEN_LOOP_ID:
-            return "YOpenLoop";
-        case SLAVE_MODE_Y_CLOSED_LOOP_ID:
-            return "YClosedLoop";
         default:
             return "Unknown";
     }

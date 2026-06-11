@@ -9,5 +9,5 @@ file(GLOB_RECURSE app_sources
 idf_component_register(
     SRCS ${app_sources}
     INCLUDE_DIRS "." "../include"
-    REQUIRES framework-arduinoespressif32 esp_wifi esp_timer
+    REQUIRES framework-arduinoespressif32 esp_wifi esp_timer esp_adc
 )

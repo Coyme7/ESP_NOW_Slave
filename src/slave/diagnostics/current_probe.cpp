@@ -10,6 +10,7 @@
 namespace {
 
 constexpr int kSlaveCurrentSenseOffsetRailMarginRaw = 32;
+constexpr uint32_t kSlaveCurrentSenseOffsetFrameTimeoutMs = 20U;
 
 #if SLAVE_ENABLE_CURRENT_SENSE_DIAG_TEST
 // 直接读取 ADC 原始电压，不经过 offset/gain，便于观察硬件采样基线。
@@ -42,10 +43,15 @@ PhaseCurrent_s sampleSlaveCurrentSenseVoltagesOnce(SlaveMotorDiagnosticsContext 
 #endif
 
 // 预读 ADC，让采样链路进入稳定状态后再做 offset 校准。
-void primeSlaveCurrentSenseAdc(SlaveMotorDiagnosticsContext &context) {
+void primeSlaveCurrentSenseAdc(SlaveMotorDiagnosticsContext &context,
+                               uint32_t &last_sequence) {
     for (uint16_t i = 0; i < kSlaveCurrentSenseDiag.adc_prime_reads; ++i) {
-        (void)context.current_sense.readRawA();
-        (void)context.current_sense.readRawB();
+        int raw_a = 0;
+        int raw_b = 0;
+        (void)context.current_sense.waitNextRawPair(last_sequence,
+                                                   kSlaveCurrentSenseOffsetFrameTimeoutMs,
+                                                   raw_a,
+                                                   raw_b);
     }
 }
 
@@ -128,7 +134,8 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
     context.driver.enable();
     context.driver.setPwm(0.0f, 0.0f, 0.0f);
     delay(kSlaveCurrentSenseDiag.offset_settle_ms);
-    primeSlaveCurrentSenseAdc(context);
+    uint32_t last_dma_sequence = 0U;
+    primeSlaveCurrentSenseAdc(context, last_dma_sequence);
 
     context.current_sense.offset_ia = 0.0f;
     context.current_sense.offset_ib = 0.0f;
@@ -142,18 +149,23 @@ bool calibrateSlaveCurrentSenseOffsets(SlaveMotorDiagnosticsContext &context) {
     uint32_t valid_reads = 0;
     uint32_t saturated_reads = 0;
     for (uint32_t i = 0; i < calibration_reads; ++i) {
-        const int raw_a = context.current_sense.readRawA();
-        const int raw_b = context.current_sense.readRawB();
+        int raw_a = 0;
+        int raw_b = 0;
+        if (!context.current_sense.waitNextRawPair(last_dma_sequence,
+                                                  kSlaveCurrentSenseOffsetFrameTimeoutMs,
+                                                  raw_a,
+                                                  raw_b)) {
+            saturated_reads++;
+            continue;
+        }
         if (!isSlaveCurrentSenseOffsetRawValid(raw_a) ||
             !isSlaveCurrentSenseOffsetRawValid(raw_b)) {
             saturated_reads++;
-            delay(1);
             continue;
         }
         sum_a_v += static_cast<float>(raw_a) * kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
         sum_b_v += static_cast<float>(raw_b) * kSlaveCurrentSenseHardware.adc_raw_to_voltage_v;
         valid_reads++;
-        delay(1);
     }
 
     const uint32_t errors_after = context.current_sense.readErrorCount();

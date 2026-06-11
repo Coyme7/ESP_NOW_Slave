@@ -35,6 +35,6 @@ static constexpr SlaveCurrentSenseDiagConfig kSlaveCurrentSenseDiag = {
     5U,    // 早期采样等待时间，单位 ms。
     80U,   // 稳定采样等待时间，单位 ms。
     8U,    // offset 校准前 ADC 预读次数。
-    1000U, // offset 校准平均次数。
+    256U,  // offset 校准平均次数。
     80U,   // offset 校准前等待时间，单位 ms。
 };

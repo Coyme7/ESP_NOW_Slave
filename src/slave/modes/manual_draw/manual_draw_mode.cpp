@@ -34,10 +34,10 @@ ModeCapability slaveManualDrawCapability(uint8_t run_mode) {
                                                  MODE_CAP_Y_MOTOR);
 
     switch (run_mode) {
-        case SLAVE_MODE_SINGLE_X_5KHZ_ID:
+        case SLAVE_MODE_SINGLE_X_4KHZ_ID:
             capability.flags = x_hw | slaveRemoteCommandFlags();
             break;
-        case SLAVE_MODE_SINGLE_Y_5KHZ_ID:
+        case SLAVE_MODE_SINGLE_Y_4KHZ_ID:
             capability.flags = y_hw | slaveRemoteCommandFlags();
             break;
         case SLAVE_MODE_DUAL_XY_4KHZ_ID:
@@ -48,17 +48,6 @@ ModeCapability slaveManualDrawCapability(uint8_t run_mode) {
             break;
         case SLAVE_MODE_DUAL_XY_DRY_RUN_ID:
             capability.flags = slaveRemoteCommandFlags() | MODE_CAP_PEN | MODE_CAP_DRY_RUN;
-            break;
-        case SLAVE_MODE_YSENSOR_ONLY_ID:
-            capability.flags = (SLAVE_Y_SENSOR_HW_ENABLED ? MODE_CAP_Y_SENSOR : MODE_CAP_NONE) |
-                               MODE_CAP_DRY_RUN;
-            break;
-        case SLAVE_MODE_Y_OPEN_LOOP_ID:
-            capability.flags = (SLAVE_Y_MOTOR_HW_ENABLED ? MODE_CAP_Y_MOTOR : MODE_CAP_NONE) |
-                               MODE_CAP_DRY_RUN;
-            break;
-        case SLAVE_MODE_Y_CLOSED_LOOP_ID:
-            capability.flags = y_hw | MODE_CAP_DRY_RUN;
             break;
         default:
             capability.flags = MODE_CAP_NONE;

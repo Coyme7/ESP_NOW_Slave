@@ -58,8 +58,12 @@
 #define SLAVE_STATUS_TIMING_LOG_ENABLED SLAVE_TIMING_STEP_DIAG_ENABLED
 #endif
 
-// 功能说明：启用 YSensorOnly 低频读数日志。
-// 0：不在状态任务读取 Y 编码器；1：YSensorOnly bring-up 时输出 Y 编码器读数。
+// 功能说明：启用 Y 轴编码器低频状态读数日志。
+// 0：不在状态任务读取 Y 编码器；1：在真实 Y 硬件路径中输出 Y 编码器读数。
+#ifndef SLAVE_STATUS_X_SENSOR_BRINGUP_LOG_ENABLED
+#define SLAVE_STATUS_X_SENSOR_BRINGUP_LOG_ENABLED 1
+#endif
+
 #ifndef SLAVE_STATUS_Y_SENSOR_BRINGUP_LOG_ENABLED
 #define SLAVE_STATUS_Y_SENSOR_BRINGUP_LOG_ENABLED 1
 #endif

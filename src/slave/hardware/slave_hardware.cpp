@@ -8,6 +8,7 @@
 #include "common/system_state.h"
 #include "slave/config/slave_config.h"
 #include "slave/diagnostics/current_probe.h"
+#include "slave/hardware/slave_adc1_dma_sampler.h"
 #include "slave/hardware/slave_current_sense_adc1.h"
 #include "slave/hardware/slave_mt6701_sensor.h"
 #include "slave/modes/mode_traits.h"
@@ -111,7 +112,60 @@ void markSlaveMotorInitFault(BLDCDriver3PWM &driver) {
     addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
 }
 
+void logSlaveMotorFocInitFailure(const char *axis,
+                                 BLDCMotor &motor,
+                                 BLDCDriver3PWM &driver,
+                                 SlaveMt6701Sensor &sensor,
+                                 SlaveAdc1CurrentSense *current_sense) {
+#if SLAVE_BOOT_LOG_ENABLED
+    const bool has_current_sense = current_sense != nullptr;
+    const int raw_adc_a = has_current_sense ? current_sense->readRawA() : 0;
+    const int raw_adc_b = has_current_sense ? current_sense->readRawB() : 0;
+    const uint32_t adc_errors =
+        has_current_sense ? current_sense->readErrorCount() : 0U;
+    Serial.printf("[Slave] motor_diag axis=%s foc_failed skip_align=%u motor_status=%d enabled=%d direction=%s zero=%.6frad align=%.2fV vlim=%.2fV driver_vlim=%.2fV sensor_raw=%u sensor_frame=0x%06lX sensor_mag=%u sensor_us=%lu current_sense=%u cs_init=%u cs_skip=%u raw_adc=%d,%d adc_errors=%lu\n",
+                  axis,
+                  SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP ? 1 : 0,
+                  static_cast<int>(motor.motor_status),
+                  static_cast<int>(motor.enabled),
+                  slaveFocDirectionName(motor.sensor_direction),
+                  motor.zero_electric_angle,
+                  motor.voltage_sensor_align,
+                  motor.voltage_limit,
+                  driver.voltage_limit,
+                  static_cast<unsigned int>(sensor.rawAngle()),
+                  static_cast<unsigned long>(sensor.lastFrame()),
+                  static_cast<unsigned int>(sensor.magneticStatus()),
+                  static_cast<unsigned long>(sensor.lastReadDurationUs()),
+                  has_current_sense ? 1 : 0,
+                  (has_current_sense && current_sense->initialized) ? 1 : 0,
+                  (has_current_sense && current_sense->skip_align) ? 1 : 0,
+                  raw_adc_a,
+                  raw_adc_b,
+                  static_cast<unsigned long>(adc_errors));
+#else
+    (void)axis;
+    (void)motor;
+    (void)driver;
+    (void)sensor;
+    (void)current_sense;
+#endif
+}
+
 #if SLAVE_ENABLE_CURRENT_SENSE
+void disableSlaveMotorForAdcFault(BLDCMotor &motor,
+                                  BLDCDriver3PWM &driver,
+                                  bool &motor_ready,
+                                  bool &current_sense_ready) {
+    motor.target = 0.0f;
+    motor.current_sp = 0.0f;
+    motor.PID_current_q.reset();
+    motor.PID_current_d.reset();
+    driver.disable();
+    motor_ready = false;
+    current_sense_ready = false;
+}
+
 bool disableSlaveMotorOnAdcFault(BLDCMotor &motor,
                                  BLDCDriver3PWM &driver,
                                  SlaveAdc1CurrentSense &current_sense,
@@ -121,13 +175,7 @@ bool disableSlaveMotorOnAdcFault(BLDCMotor &motor,
         return false;
     }
 
-    motor.target = 0.0f;
-    motor.current_sp = 0.0f;
-    motor.PID_current_q.reset();
-    motor.PID_current_d.reset();
-    driver.disable();
-    motor_ready = false;
-    current_sense_ready = false;
+    disableSlaveMotorForAdcFault(motor, driver, motor_ready, current_sense_ready);
     setUvOutput(false);
     addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
     return true;
@@ -137,6 +185,8 @@ bool disableSlaveMotorOnAdcFault(BLDCMotor &motor,
 bool initSlaveMotorFocForAxis(const char *axis,
                               BLDCMotor &motor,
                               BLDCDriver3PWM &driver,
+                              SlaveMt6701Sensor &sensor,
+                              SlaveAdc1CurrentSense *current_sense,
                               int8_t direction_sign,
                               float zero_electric_angle_rad) {
 #if SLAVE_SKIP_FOC_ALIGNMENT_ON_STARTUP
@@ -155,6 +205,7 @@ bool initSlaveMotorFocForAxis(const char *axis,
 #endif
 
     if (!motor.initFOC()) {
+        logSlaveMotorFocInitFailure(axis, motor, driver, sensor, current_sense);
         markSlaveMotorInitFault(driver);
         return false;
     }
@@ -171,32 +222,23 @@ bool initSlaveMotorFocForAxis(const char *axis,
 
 #if SLAVE_X_MOTOR_HW_ENABLED || SLAVE_Y_MOTOR_HW_ENABLED
 void applySlaveMotorFocConfig(BLDCMotor &motor,
-                              const SlaveMotorFocConfig &config,
-                              bool open_loop) {
+                              const SlaveMotorFocConfig &config) {
     motor.voltage_sensor_align = config.voltage.align_v;
-    motor.voltage_limit = open_loop
-                              ? fminf(config.voltage.motor_limit_v,
-                                      config.voltage.open_loop_limit_v)
-                              : config.voltage.motor_limit_v;
+    motor.voltage_limit = config.voltage.motor_limit_v;
     motor.velocity_limit = config.limit.velocity_rad_s;
     motor.current_limit = config.limit.current_a;
 
-    if (open_loop) {
-        motor.torque_controller = TorqueControlType::voltage;
-        motor.controller = MotionControlType::angle_openloop;
-    } else {
 #if SLAVE_ENABLE_CURRENT_SENSE
-        motor.torque_controller = TorqueControlType::foc_current;
+    motor.torque_controller = TorqueControlType::foc_current;
 #if SLAVE_ENABLE_ZERO_CURRENT_TEST
-        motor.controller = MotionControlType::torque;
+    motor.controller = MotionControlType::torque;
 #else
-        motor.controller = MotionControlType::angle;
+    motor.controller = MotionControlType::angle;
 #endif
 #else
-        motor.torque_controller = TorqueControlType::voltage;
-        motor.controller = MotionControlType::angle;
+    motor.torque_controller = TorqueControlType::voltage;
+    motor.controller = MotionControlType::angle;
 #endif
-    }
 
     motor.P_angle.P = config.position.p;
     motor.P_angle.I = config.position.i;
@@ -208,7 +250,7 @@ void applySlaveMotorFocConfig(BLDCMotor &motor,
     motor.PID_velocity.output_ramp = config.velocity.output_ramp;
     motor.PID_velocity.limit =
 #if SLAVE_ENABLE_CURRENT_SENSE
-        open_loop ? config.voltage.motor_limit_v : config.limit.current_a;
+        config.limit.current_a;
 #else
         config.voltage.motor_limit_v;
 #endif
@@ -248,10 +290,7 @@ const SlaveMotorFocConfig &slaveMotorConfigForAxis(AxisId axis) {
     return axis == AXIS_X ? kSlaveXMotorFoc : kSlaveYMotorFoc;
 }
 
-__attribute__((unused)) const char *slaveTorqueControllerName(bool open_loop) {
-    if (open_loop) {
-        return "voltage_open_loop";
-    }
+__attribute__((unused)) const char *slaveTorqueControllerName() {
 #if SLAVE_ENABLE_CURRENT_SENSE
     return "foc_current";
 #else
@@ -330,20 +369,16 @@ bool initSlaveCurrentSenseForAxis(const char *axis_name,
 #endif
 
 #if SLAVE_Y_MOTOR_HW_ENABLED
-bool initSlaveYMotorHardware(bool open_loop) {
+bool initSlaveYMotorHardware() {
 #if SLAVE_Y_SENSOR_HW_ENABLED
-    if (!open_loop) {
-        if (!ySensorReady && !setupSlaveYSensorHardware()) {
-            setUvOutput(false);
-            return false;
-        }
-    }
-#else
-    if (!open_loop) {
+    if (!ySensorReady && !setupSlaveYSensorHardware()) {
         setUvOutput(false);
-        addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
         return false;
     }
+#else
+    setUvOutput(false);
+    addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+    return false;
 #endif
 
     yDriver.enable_active_high = SLAVE_DRIVER_ENABLE_ACTIVE_HIGH != 0;
@@ -356,15 +391,13 @@ bool initSlaveYMotorHardware(bool open_loop) {
     yDriver.disable();
 
 #if SLAVE_Y_SENSOR_HW_ENABLED
-    if (!open_loop) {
-        yMotor.linkSensor(&ySensor);
-    }
+    yMotor.linkSensor(&ySensor);
 #endif
     yMotor.linkDriver(&yDriver);
-    applySlaveMotorFocConfig(yMotor, kSlaveYMotorFoc, open_loop);
+    applySlaveMotorFocConfig(yMotor, kSlaveYMotorFoc);
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.printf("[Slave] motor_diag axis=Y torque_controller=%s current_limit=%.3fA vlim=%.2fV align=%.2fV pp=%u\n",
-                  slaveTorqueControllerName(open_loop),
+                  slaveTorqueControllerName(),
                   kSlaveYMotorFoc.limit.current_a,
                   yMotor.voltage_limit,
                   kSlaveYMotorFoc.voltage.align_v,
@@ -372,36 +405,38 @@ bool initSlaveYMotorHardware(bool open_loop) {
 #endif
 
 #if SLAVE_ENABLE_CURRENT_SENSE && SLAVE_Y_SENSOR_HW_ENABLED
-    if (!open_loop) {
-        if (!initSlaveCurrentSenseForAxis("Y",
-                                          yMotor,
-                                          yDriver,
-                                          yCurrentSense,
-                                          ySensor,
-                                          kSlaveYMotorFoc,
-                                          board_pins_slave::MOTOR2_CURRENT_A_Y,
-                                          board_pins_slave::MOTOR2_CURRENT_B_Y,
-                                          kSlaveYCurrentSenseAxis.gain_sign_a,
-                                          kSlaveYCurrentSenseAxis.gain_sign_b)) {
-            return false;
-        }
-        yCurrentSenseReady = true;
+    if (!initSlaveCurrentSenseForAxis("Y",
+                                      yMotor,
+                                      yDriver,
+                                      yCurrentSense,
+                                      ySensor,
+                                      kSlaveYMotorFoc,
+                                      board_pins_slave::MOTOR2_CURRENT_A_Y,
+                                      board_pins_slave::MOTOR2_CURRENT_B_Y,
+                                      kSlaveYCurrentSenseAxis.gain_sign_a,
+                                      kSlaveYCurrentSenseAxis.gain_sign_b)) {
+        return false;
     }
+    yCurrentSenseReady = true;
 #endif
 
     yMotor.init();
-    if (open_loop) {
-        yMotorReady = true;
-        return true;
-    }
 
+#if SLAVE_Y_SENSOR_HW_ENABLED
     if (!initSlaveMotorFocForAxis("Y",
                                   yMotor,
                                   yDriver,
+                                  ySensor,
+#if SLAVE_ENABLE_CURRENT_SENSE
+                                  &yCurrentSense,
+#else
+                                  nullptr,
+#endif
                                   SLAVE_Y_FOC_SENSOR_DIRECTION,
                                   SLAVE_Y_ZERO_ELECTRIC_ANGLE_RAD)) {
         return false;
     }
+#endif
     yMotorReady = true;
     return true;
 }
@@ -437,6 +472,22 @@ void configureSlaveSafeOutputs() {
 #if SLAVE_X_MOTOR_HW_ENABLED || SLAVE_Y_MOTOR_HW_ENABLED
     pinMode(board_pins_slave::MOTOR_DRIVER_EN, OUTPUT);
     digitalWrite(board_pins_slave::MOTOR_DRIVER_EN, motorDriverDisabledLevel());
+#endif
+}
+
+void disableSlaveMotorOutputsForAdcFault() {
+#if SLAVE_ENABLE_CURRENT_SENSE
+#if SLAVE_X_MOTOR_HW_ENABLED
+    disableSlaveMotorForAdcFault(xMotor, xDriver, xMotorReady, xCurrentSenseReady);
+#endif
+#if SLAVE_Y_MOTOR_HW_ENABLED
+    disableSlaveMotorForAdcFault(yMotor, yDriver, yMotorReady, yCurrentSenseReady);
+#endif
+    setUvOutput(false);
+    addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
+#else
+    setUvOutput(false);
+    addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
 #endif
 }
 
@@ -478,10 +529,10 @@ bool setupSlaveXMotorHardware() {
 
     xMotor.linkSensor(&xSensor);
     xMotor.linkDriver(&xDriver);
-    applySlaveMotorFocConfig(xMotor, kSlaveXMotorFoc, false);
+    applySlaveMotorFocConfig(xMotor, kSlaveXMotorFoc);
 #if SLAVE_BOOT_LOG_ENABLED
     Serial.printf("[Slave] motor_diag axis=X torque_controller=%s current_limit=%.3fA vlim=%.2fV align=%.2fV pp=%u\n",
-                  slaveTorqueControllerName(false),
+                  slaveTorqueControllerName(),
                   kSlaveXMotorFoc.limit.current_a,
                   xMotor.voltage_limit,
                   kSlaveXMotorFoc.voltage.align_v,
@@ -508,6 +559,12 @@ bool setupSlaveXMotorHardware() {
     if (!initSlaveMotorFocForAxis("X",
                                   xMotor,
                                   xDriver,
+                                  xSensor,
+#if SLAVE_ENABLE_CURRENT_SENSE
+                                  &xCurrentSense,
+#else
+                                  nullptr,
+#endif
                                   SLAVE_X_FOC_SENSOR_DIRECTION,
                                   SLAVE_X_ZERO_ELECTRIC_ANGLE_RAD)) {
         return false;
@@ -538,18 +595,9 @@ bool setupSlaveYSensorHardware() {
 #endif
 }
 
-bool setupSlaveYMotorOpenLoopHardware() {
-#if SLAVE_Y_MOTOR_HW_ENABLED
-    return initSlaveYMotorHardware(true);
-#else
-    addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
-    return false;
-#endif
-}
-
 bool setupSlaveYMotorClosedLoopHardware() {
 #if SLAVE_Y_MOTOR_HW_ENABLED && SLAVE_Y_SENSOR_HW_ENABLED
-    return initSlaveYMotorHardware(false);
+    return initSlaveYMotorHardware();
 #else
     addLocalFault(FAULT_MOTOR_OUTPUT_DISABLED);
     return false;
@@ -756,12 +804,11 @@ float applySlaveYMotorTarget(float target_angle_rad,
         loop_foc_divider = 0;
     }
 
-    const bool y_open_loop = slaveRunModeUsesOpenLoopMotor(AXIS_Y);
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
     const uint32_t foc_start_us = micros();
     uint32_t move_start_us = foc_start_us;
 #endif
-    if (run_loop_foc && !y_open_loop) {
+    if (run_loop_foc) {
         yMotor.loopFOC();
 #if SLAVE_TIMING_DETAIL_DIAG_ENABLED
         move_start_us = micros();
@@ -804,20 +851,20 @@ float applySlaveYMotorTarget(float target_angle_rad,
     const uint32_t done_us = micros();
     if (timing != nullptr) {
         timing->loop_foc_us =
-            (run_loop_foc && !y_open_loop)
+            run_loop_foc
                 ? (move_start_us - foc_start_us)
                 : 0UL;
         timing->move_us = run_move ? (done_us - move_start_us) : 0UL;
 #if SLAVE_Y_SENSOR_HW_ENABLED
         timing->sensor_us =
-            (run_loop_foc && !y_open_loop)
+            run_loop_foc
                 ? ySensor.lastReadDurationUs()
                 : 0UL;
 #else
         timing->sensor_us = 0UL;
 #endif
         timing->loop_foc_ran =
-            (run_loop_foc && !y_open_loop) ? 1UL : 0UL;
+            run_loop_foc ? 1UL : 0UL;
     }
 #endif
     return yMotor.shaft_angle;
@@ -829,6 +876,26 @@ float applySlaveYMotorTarget(float target_angle_rad,
 
 float applySlaveYMotorTarget(float target_angle_rad, float fallback_actual_angle_rad) {
     return applySlaveYMotorTarget(target_angle_rad, fallback_actual_angle_rad, nullptr);
+}
+
+bool sampleSlaveXSensorForStatus(float *angle_rad, uint16_t *raw_angle) {
+#if SLAVE_X_SENSOR_HW_ENABLED
+    if (!xSensorReady) {
+        return false;
+    }
+    xSensor.update();
+    if (angle_rad != nullptr) {
+        *angle_rad = xSensor.getMechanicalAngle();
+    }
+    if (raw_angle != nullptr) {
+        *raw_angle = xSensor.rawAngle();
+    }
+    return true;
+#else
+    (void)angle_rad;
+    (void)raw_angle;
+    return false;
+#endif
 }
 
 bool sampleSlaveYSensorForStatus(float *angle_rad, uint16_t *raw_angle) {
@@ -915,12 +982,12 @@ bool configureSlaveMotorTuning(AxisId axis,
                                float velocity_limit_rad_s) {
 #if SLAVE_X_MOTOR_HW_ENABLED || SLAVE_Y_MOTOR_HW_ENABLED
     BLDCMotor *motor = slaveMotorForAxis(axis);
-    if (motor == nullptr || slaveRunModeUsesOpenLoopMotor(axis)) {
+    if (motor == nullptr) {
         return false;
     }
 
     const SlaveMotorFocConfig &config = slaveMotorConfigForAxis(axis);
-    applySlaveMotorFocConfig(*motor, config, false);
+    applySlaveMotorFocConfig(*motor, config);
     motor->current_limit = fminf(current_limit_a, config.limit.current_a);
     motor->voltage_limit = fminf(voltage_limit_v, config.voltage.motor_limit_v);
     motor->velocity_limit = fminf(velocity_limit_rad_s, config.limit.velocity_rad_s);
@@ -982,7 +1049,7 @@ void restoreSlaveMotorTuning(AxisId axis) {
     if (motor == nullptr) {
         return;
     }
-    applySlaveMotorFocConfig(*motor, slaveMotorConfigForAxis(axis), false);
+    applySlaveMotorFocConfig(*motor, slaveMotorConfigForAxis(axis));
     motor->PID_current_q.reset();
     motor->PID_current_d.reset();
     motor->PID_velocity.reset();

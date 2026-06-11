@@ -15,6 +15,7 @@
 #include "slave/control/slave_coordinate_mapper.h"
 #include "slave/control/slave_motion_state.h"
 #include "slave/control/slave_trajectory_smoother.h"
+#include "slave/hardware/slave_adc1_dma_sampler.h"
 #include "slave/hardware/slave_hardware.h"
 #include "slave/modes/mode_guard.h"
 #include "slave/safety/slave_safety.h"
@@ -466,6 +467,11 @@ void runSlaveMotorStep(SlaveControlStepTiming *timing) {
 }
 
 void runSlaveControlStep(float dt_s, SlaveControlStepTiming *timing) {
+    if (!latchSlaveAdc1DmaControlSnapshot()) {
+        disableSlaveMotorOutputsForAdcFault();
+        return;
+    }
+
 #if SLAVE_CONTROL_PERF_MODE != SLAVE_PERF_MODE_FULL_CONTROL
     runSlaveControlPerfIsolationStep(dt_s, timing);
     return;
